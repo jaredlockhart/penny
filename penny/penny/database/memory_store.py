@@ -42,6 +42,7 @@ from similarity.embeddings import (
     serialize_embedding,
     token_containment_ratio,
 )
+from similarity.lexical import idf, lexical_coverage, reciprocal_rank_fusion, tokens
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -57,8 +58,28 @@ class MemoryType(StrEnum):
     LOG = "log"
 
 
+class Inclusion(StrEnum):
+    """Stage-1 collection-routing flag — does this memory feed recall at all.
+
+    ``always`` participates unconditionally; ``relevant`` participates only
+    when the conversation embeds close to the memory's description anchor;
+    ``never`` is excluded (the old ``recall=off``).
+    """
+
+    ALWAYS = "always"
+    RELEVANT = "relevant"
+    NEVER = "never"
+
+
 class RecallMode(StrEnum):
-    OFF = "off"
+    """Stage-2 entry-rendering flag — which entries of an included memory surface.
+
+    ``recent`` is the newest-first slice; ``all`` is the full set; ``relevant``
+    is hybrid-ranked (embedding cosine fused with IDF-lexical) against the
+    conversation window, top-N, no floor — the stage-1 gate already decided
+    the memory is relevant.
+    """
+
     RECENT = "recent"
     RELEVANT = "relevant"
     ALL = "all"
@@ -188,37 +209,57 @@ class MemoryStore:
         self,
         name: str,
         description: str,
+        inclusion: Inclusion,
         recall: RecallMode,
         archived: bool = False,
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
+        description_embedding: list[float] | None = None,
     ) -> Memory:
         return self._create_memory(
             name,
             MemoryType.COLLECTION,
             description,
+            inclusion,
             recall,
             archived,
             extraction_prompt=extraction_prompt,
             collector_interval_seconds=collector_interval_seconds,
+            description_embedding=description_embedding,
         )
 
     def create_log(
-        self, name: str, description: str, recall: RecallMode, archived: bool = False
+        self,
+        name: str,
+        description: str,
+        inclusion: Inclusion,
+        recall: RecallMode,
+        archived: bool = False,
+        description_embedding: list[float] | None = None,
     ) -> Memory:
         # Logs are inputs, not curated outputs — no extraction_prompt by design.
-        return self._create_memory(name, MemoryType.LOG, description, recall, archived)
+        return self._create_memory(
+            name,
+            MemoryType.LOG,
+            description,
+            inclusion,
+            recall,
+            archived,
+            description_embedding=description_embedding,
+        )
 
     def _create_memory(
         self,
         name: str,
         type_: MemoryType,
         description: str,
+        inclusion: Inclusion,
         recall: RecallMode,
         archived: bool,
         *,
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
+        description_embedding: list[float] | None = None,
     ) -> Memory:
         name = _slug(name)
         if self.get(name) is not None:
@@ -228,7 +269,9 @@ class MemoryStore:
                 name=name,
                 type=type_.value,
                 description=description,
+                inclusion=inclusion.value,
                 recall=recall.value,
+                description_embedding=_maybe_serialize(description_embedding),
                 archived=archived,
                 extraction_prompt=extraction_prompt,
                 collector_interval_seconds=collector_interval_seconds,
@@ -292,11 +335,18 @@ class MemoryStore:
         name: str,
         *,
         description: str | None = None,
+        inclusion: Inclusion | None = None,
         recall: RecallMode | None = None,
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
+        description_embedding: list[float] | None = None,
     ) -> Memory:
-        """Update fields on an existing collection.  Only set fields are applied."""
+        """Update fields on an existing collection.  Only set fields are applied.
+
+        When ``description`` changes the caller passes the freshly computed
+        ``description_embedding`` alongside it so the stage-1 anchor stays in
+        sync — the two always move together.
+        """
         name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
         with self._session() as session:
@@ -305,6 +355,10 @@ class MemoryStore:
                 raise MemoryNotFoundError(name)
             if description is not None:
                 memory.description = description
+            if description_embedding is not None:
+                memory.description_embedding = _maybe_serialize(description_embedding)
+            if inclusion is not None:
+                memory.inclusion = inclusion.value
             if recall is not None:
                 memory.recall = recall.value
             if extraction_prompt is not None:
@@ -339,11 +393,11 @@ class MemoryStore:
     def get_entries_without_embeddings(self, limit: int) -> list[MemoryEntry]:
         """Entries missing a content embedding that are worth embedding.
 
-        Scoped to non-archived memories whose ``recall`` is not ``off``:
-        a ``recall=off`` memory (e.g. ``collector-runs``) never surfaces via
-        similarity and is never probed by ``read_similar``, so embedding its
+        Scoped to non-archived memories whose ``inclusion`` is not ``never``:
+        an ``inclusion=never`` memory (e.g. ``collector-runs``) never surfaces
+        via recall and is never probed by ``read_similar``, so embedding its
         entries is pure waste — and there can be tens of thousands of them.
-        Entries reachable by relevant-recall or ``read_similar`` (skills,
+        Entries reachable by stage-1 routing or ``read_similar`` (skills,
         ``user-messages``, etc.) are the ones that actually need vectors.
 
         Newest first, so the most recall-relevant rows embed first when the
@@ -357,12 +411,44 @@ class MemoryStore:
                     .where(
                         MemoryEntry.content_embedding == None,  # noqa: E711
                         Memory.archived == False,  # noqa: E712
-                        Memory.recall != RecallMode.OFF.value,
+                        Memory.inclusion != Inclusion.NEVER.value,
                     )
                     .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
                     .limit(limit)
                 ).all()
             )
+
+    def get_memories_without_description_embedding(self, limit: int) -> list[Memory]:
+        """Active, routable memories whose stage-1 description anchor is unset.
+
+        Scoped to non-archived memories with ``inclusion != never`` — a
+        ``never`` memory is never routed, so its description anchor is never
+        consulted.  Powers the startup backfill that vectorizes descriptions
+        seeded by migrations (which can't embed).
+        """
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Memory)
+                    .where(
+                        Memory.description_embedding == None,  # noqa: E711
+                        Memory.archived == False,  # noqa: E712
+                        Memory.inclusion != Inclusion.NEVER.value,
+                    )
+                    .limit(limit)
+                ).all()
+            )
+
+    def set_description_embedding(self, name: str, embedding: list[float]) -> None:
+        """Persist the stage-1 description anchor on a memory (backfill path)."""
+        name = _slug(name)
+        with self._session() as session:
+            memory = session.get(Memory, name)
+            if memory is None:
+                return
+            memory.description_embedding = _maybe_serialize(embedding)
+            session.add(memory)
+            session.commit()
 
     def set_entry_embeddings(
         self,
@@ -634,42 +720,32 @@ class MemoryStore:
         self,
         name: str,
         conversation_anchors: list[list[float]],
+        query_text: str,
         k: int | None = None,
-        floor: float = 0.0,
         exclude_contents: set[str] | None = None,
     ) -> list[MemoryEntry]:
-        """Hybrid relevance over a conversation window.
+        """Stage-2 entry ranking: hybrid of embedding cosine and IDF-lexical.
 
-        ``conversation_anchors`` is ordered oldest→newest; the last element
-        is the *current* message, the rest are prior turns providing topic
-        context.  Each candidate is scored as
+        ``conversation_anchors`` is ordered oldest→newest (the last element is
+        the current message); ``query_text`` is that same window flattened for
+        lexical matching.  Each candidate is ranked two ways — best cosine
+        across the anchor window, and IDF-weighted lexical coverage of the
+        query — and the two rankings are fused with reciprocal-rank fusion.
+        The top-``k`` survive; there is **no** relevance floor, because stage-1
+        routing (``inclusion``) already decided this memory is relevant.
 
-            max(weighted_decay_over_history, cosine_to_current)
+        Fusing lexical with cosine surfaces instruction-shaped entries (skills,
+        recipes) whose absolute cosine is low against a chatty query but whose
+        distinctive vocabulary overlaps it — the failure mode the old absolute
+        floor produced.
 
-        so a strong direct hit on the current message stands alone, while
-        vague follow-ups still benefit from conversation drift.  The
-        adaptive cutoff is applied identically to ``read_similar``.
-
-        Single-element ``conversation_anchors`` reduces cleanly to the same
-        ranking as ``read_similar`` — the weighted-decay branch is just the
-        lone cosine, so ``max()`` picks it.
-
-        ``exclude_contents`` (optional) drops corpus rows whose content
-        matches any string in the set.  Use this to keep the conversation
-        anchors themselves out of their own retrieval: the chat path
-        writes the user's incoming message to ``user-messages`` before
-        recall runs, and any conversation-history message similarly lives
-        in the corpus, so without exclusion they'd self-match their own
-        anchor at cosine ≈ 1.0 and dominate the hit list.
-
-        Low-information rows (fewer than ``MEMORY_RELEVANT_MIN_WORDS``
-        word tokens) are filtered out of the corpus before scoring **for
-        log-shaped memories only**.  Empty strings, lone punctuation,
-        and stock greetings otherwise dominate cosine ranking on short
-        keyword queries.  Collections have keyed entries where short
-        content is deliberate (``"anime"``, ``"cyberpunk"`` are valid
-        like preferences); filtering them would wipe out 75%+ of the
-        user's actual stated topics.
+        ``exclude_contents`` (optional) drops corpus rows whose content matches
+        any string in the set — the chat path writes the incoming message and
+        history into log memories before recall runs, so without exclusion an
+        anchor would self-match at cosine ≈ 1.0 and dominate.  Low-information
+        rows (fewer than ``MEMORY_RELEVANT_MIN_WORDS`` tokens) are filtered for
+        log-shaped memories only; collections keep deliberately short keyed
+        entries (``"anime"``, ``"cyberpunk"``).
         """
         name = _slug(name)
         if not conversation_anchors:
@@ -679,12 +755,44 @@ class MemoryStore:
             rows = [r for r in rows if r.content not in exclude_contents]
         if self._memory_type(name) == MemoryType.LOG.value:
             rows = [r for r in rows if not _is_low_info(r.content)]
-        scored = self._score(rows, conversation_anchors)
-        cutoff = _adaptive_cutoff(scored, floor)
-        if cutoff is None:
+        valid = [r for r in rows if r.id is not None and r.content_embedding is not None]
+        if not valid:
             return []
-        ordered = [row for score, row in scored if score >= cutoff]
-        return ordered if k is None else ordered[:k]
+        ranked = self._rank_hybrid(valid, conversation_anchors, query_text)
+        return ranked if k is None else ranked[:k]
+
+    def _rank_hybrid(
+        self,
+        rows: list[MemoryEntry],
+        anchors: list[list[float]],
+        query_text: str,
+    ) -> list[MemoryEntry]:
+        """Fuse a cosine ranking and an IDF-lexical ranking over ``rows`` via RRF.
+
+        Cosine is the best similarity across the conversation window (``max``
+        over anchors) so a strong hit on any turn counts; lexical coverage is
+        the IDF-weighted fraction of the query's distinctive tokens each entry
+        contains.  Rows are keyed by id for fusion; callers pass only rows that
+        have both an id and a content embedding.
+        """
+        matrix = _stack_normalized(
+            row.content_embedding for row in rows if row.content_embedding is not None
+        )
+        anchor_matrix = _stack_normalized_anchors(anchors)
+        best_cosine = (matrix @ anchor_matrix.T).max(axis=1)  # (N,) max over the window
+        cosine_rank = [rows[i].id for i in np.argsort(-best_cosine)]
+
+        query_tokens = tokens(query_text)
+        document_tokens = [tokens(row.content) for row in rows]
+        idf_map = idf(document_tokens)
+        coverage = np.array(
+            [lexical_coverage(query_tokens, doc, idf_map) for doc in document_tokens]
+        )
+        lexical_rank = [rows[i].id for i in np.argsort(-coverage)]
+
+        by_id = {row.id: row for row in rows}
+        fused = reciprocal_rank_fusion([cosine_rank, lexical_rank])
+        return [by_id[entry_id] for entry_id in fused]
 
     def _embedded_rows(self, name: str) -> list[MemoryEntry]:
         with self._session() as session:
@@ -884,7 +992,7 @@ class MemoryStore:
         under the dedup rule, or ``None`` if no match.  Returning the
         matched side (instead of bool) lets callers surface *which*
         existing entry blocked the write — the rejection message can
-        then say ``"matches existing 'Kepler Museum'"`` so the model
+        then say ``"matches existing 'Catan'"`` so the model
         can pivot to ``update_entry`` when it has fresher info.
 
         Truthy/falsy in a bool context is preserved (``None`` is falsy,

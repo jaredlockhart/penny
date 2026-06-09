@@ -17,7 +17,7 @@ from penny.constants import PennyConstants
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
-# observed writing ``"prague‑highlights"`` for ``"prague-highlights"``.
+# observed writing ``"board‑games"`` for ``"board-games"``.
 # The visual is identical but the string compares unequal, so memory-keyed
 # tools (``collection_write``, ``log_read_next``, etc.) silently failed
 # with refusals or "memory not found" errors.  Normalise on the way in so
@@ -61,7 +61,8 @@ class CollectionCreateArgs(BaseModel):
 
     name: MemoryName
     description: str
-    recall: str  # "off" | "recent" | "relevant" | "all" — validated in the store layer
+    inclusion: str  # "always" | "relevant" | "never" — validated in the store layer
+    recall: str  # "all" | "relevant" | "recent" — validated in the store layer
     extraction_prompt: str
     collector_interval_seconds: int
 
@@ -76,7 +77,8 @@ class LogCreateArgs(BaseModel):
 
     name: MemoryName
     description: str
-    recall: str  # "off" | "recent" | "relevant" | "all" — validated in the store layer
+    inclusion: str  # "always" | "relevant" | "never" — validated in the store layer
+    recall: str  # "all" | "relevant" | "recent" — validated in the store layer
 
 
 class MemoryNameArgs(BaseModel):
@@ -89,12 +91,13 @@ class CollectionUpdateArgs(BaseModel):
     """Update a collection's metadata.
 
     All fields after ``name`` are optional — only the ones explicitly set
-    are applied.  ``recall`` is validated in the store layer.
+    are applied.  ``inclusion`` and ``recall`` are validated in the store layer.
     """
 
     name: MemoryName
     description: str | None = None
-    recall: str | None = None
+    inclusion: str | None = None  # "always" | "relevant" | "never"
+    recall: str | None = None  # "all" | "relevant" | "recent"
     extraction_prompt: str | None = None
     collector_interval_seconds: int | None = None
 

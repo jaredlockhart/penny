@@ -13,7 +13,7 @@ from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
-from penny.database.memory_store import EntryInput, LogEntryInput, RecallMode
+from penny.database.memory_store import EntryInput, Inclusion, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
 from penny.database.models import PromptLog, RuntimeConfig
 from penny.tests.conftest import wait_until
@@ -1172,13 +1172,13 @@ class TestBrowserPromptLogHandlers:
         """Run outcome (success / reason / target) is included in the response when set."""
         channel, db = self._channel(tmp_path)
         self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", True, "wrote 2 new spots", "prague-trip")
+        db.messages.set_run_outcome("run1", True, "wrote 2 new games", "board-games")
 
         response = await self._request_prompt_logs(channel)
         run = response["runs"][0]
         assert run["run_success"] is True
-        assert run["run_reason"] == "wrote 2 new spots"
-        assert run["run_target"] == "prague-trip"
+        assert run["run_reason"] == "wrote 2 new games"
+        assert run["run_target"] == "board-games"
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_token_counts(self, tmp_path):
@@ -1220,10 +1220,10 @@ class TestBrowserPromptLogHandlers:
         )
 
         self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", True, "wrote 2 new spots", "prague-trip")
+        db.messages.set_run_outcome("run1", True, "wrote 2 new games", "board-games")
 
         assert len(received) == 1
-        assert received[0] == ("run1", True, "wrote 2 new spots", "prague-trip")
+        assert received[0] == ("run1", True, "wrote 2 new games", "board-games")
 
     def test_on_prompt_logged_callback(self, tmp_path):
         """_on_prompt_logged callback fires with prompt data for prompts with run_id."""
@@ -1260,27 +1260,32 @@ class TestBrowserMemoryHandlers:
 
     def _channel(self, tmp_path) -> tuple[BrowserChannel, Database]:
         db = _make_db(tmp_path)
-        channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
+        # The create/edit handlers re-embed the description via the agent;
+        # no embedding model in tests → an awaitable that returns None.
+        agent = MagicMock()
+        agent.embed_description = AsyncMock(return_value=None)
+        channel = BrowserChannel(host="localhost", port=9999, message_agent=agent, db=db)
         return channel, db
 
     def _seed_memories(self, db) -> None:
 
         # ``collector-runs`` already exists from migration 0034 — just append.
         db.memories.create_collection(
-            "prague-trip",
-            "Prague spots",
+            "board-games",
+            "board games",
+            Inclusion.RELEVANT,
             RecallMode.RELEVANT,
-            extraction_prompt="extract spots",
+            extraction_prompt="extract games",
             collector_interval_seconds=300,
         )
         db.memories.write(
-            "prague-trip",
-            [EntryInput(key="petrin-hill", content="Hill with a tower")],
+            "board-games",
+            [EntryInput(key="catan", content="Gateway strategy game")],
             author="user",
         )
         db.memories.append(
             "collector-runs",
-            [LogEntryInput(content="[prague-trip] ✅ wrote 2 new spots")],
+            [LogEntryInput(content="[board-games] ✅ wrote 2 new games")],
             author="collector",
         )
 
@@ -1298,11 +1303,11 @@ class TestBrowserMemoryHandlers:
         resp = ws.sent[0]
         assert resp["type"] == "memories_response"
         by_name = {m["name"]: m for m in resp["memories"]}
-        assert "prague-trip" in by_name and "collector-runs" in by_name
-        assert by_name["prague-trip"]["type"] == "collection"
-        assert by_name["prague-trip"]["entry_count"] == 1
-        assert by_name["prague-trip"]["extraction_prompt"] == "extract spots"
-        assert by_name["prague-trip"]["collector_interval_seconds"] == 300
+        assert "board-games" in by_name and "collector-runs" in by_name
+        assert by_name["board-games"]["type"] == "collection"
+        assert by_name["board-games"]["entry_count"] == 1
+        assert by_name["board-games"]["extraction_prompt"] == "extract games"
+        assert by_name["board-games"]["collector_interval_seconds"] == 300
         assert by_name["collector-runs"]["type"] == "log"
         assert by_name["collector-runs"]["entry_count"] == 1
         assert by_name["collector-runs"]["extraction_prompt"] is None
@@ -1345,7 +1350,7 @@ class TestBrowserMemoryHandlers:
         entries scoped to that target — newest-first, prefix-filtered."""
         channel, db = self._channel(tmp_path)
         db.memories.create_collection(
-            "prague-trip", "spots", RecallMode.RELEVANT, extraction_prompt="x"
+            "board-games", "games", Inclusion.RELEVANT, RecallMode.RELEVANT, extraction_prompt="x"
         )
         db.memories.append(
             "collector-runs",
@@ -1354,27 +1359,27 @@ class TestBrowserMemoryHandlers:
         )
         db.memories.append(
             "collector-runs",
-            [LogEntryInput(content="[prague-trip] ✅ wrote 2 spots")],
+            [LogEntryInput(content="[board-games] ✅ wrote 2 games")],
             author="collector",
         )
         db.memories.append(
             "collector-runs",
-            [LogEntryInput(content="[prague-trip] ❌ no source URL found")],
+            [LogEntryInput(content="[board-games] ❌ no source URL found")],
             author="collector",
         )
 
         ws = _MockWs()
         await channel._handle_memory_detail_request(
             ws,  # ty: ignore[invalid-argument-type]
-            {"type": "memory_detail_request", "name": "prague-trip"},
+            {"type": "memory_detail_request", "name": "board-games"},
         )
 
         resp = ws.sent[0]
         runs = resp["collector_runs"]
         assert len(runs) == 2
         # Newest first.
-        assert runs[0]["content"] == "[prague-trip] ❌ no source URL found"
-        assert runs[1]["content"] == "[prague-trip] ✅ wrote 2 spots"
+        assert runs[0]["content"] == "[board-games] ❌ no source URL found"
+        assert runs[1]["content"] == "[board-games] ✅ wrote 2 games"
         # Other-target run is excluded.
         assert all("other-target" not in r["content"] for r in runs)
 
@@ -1393,18 +1398,18 @@ class TestBrowserMemoryHandlers:
         """A collection write triggers the change callback so the addon can refresh."""
 
         _, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "spots", RecallMode.OFF)
+        db.memories.create_collection("board-games", "games", Inclusion.NEVER, RecallMode.RECENT)
 
         received: list[str | None] = []
         db.memories._on_memory_changed = lambda name: received.append(name)
 
         db.memories.write(
-            "prague-trip",
-            [EntryInput(key="petrin-hill", content="Hill")],
+            "board-games",
+            [EntryInput(key="catan", content="A classic")],
             author="user",
         )
 
-        assert "prague-trip" in received
+        assert "board-games" in received
 
     def test_memory_changed_callback_fires_on_log_append(self, tmp_path):
         """Log appends fire the callback too — the audit log lives behind it."""
@@ -1424,37 +1429,43 @@ class TestBrowserMemoryHandlers:
         """memory_create writes a new collection to the store with the
         addon-supplied recall + extraction_prompt."""
         channel, db = self._channel(tmp_path)
-        channel._handle_memory_create(
-            {
-                "type": "memory_create",
-                "name": "prague-trip",
-                "description": "Prague spots",
-                "recall": "relevant",
-                "extraction_prompt": "extract spots",
-                "collector_interval_seconds": 600,
-            }
+        asyncio.run(
+            channel._handle_memory_create(
+                {
+                    "type": "memory_create",
+                    "name": "board-games",
+                    "description": "board games",
+                    "inclusion": "relevant",
+                    "recall": "relevant",
+                    "extraction_prompt": "extract games",
+                    "collector_interval_seconds": 600,
+                }
+            )
         )
-        memory = db.memories.get("prague-trip")
+        memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.type == "collection"
+        assert memory.inclusion == "relevant"
         assert memory.recall == "relevant"
-        assert memory.extraction_prompt == "extract spots"
+        assert memory.extraction_prompt == "extract games"
         assert memory.collector_interval_seconds == 600
 
     def test_memory_create_silently_drops_duplicate_name(self, tmp_path):
         """A duplicate name is logged and dropped — no crash."""
 
         channel, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "first", RecallMode.OFF)
-        channel._handle_memory_create(
-            {
-                "type": "memory_create",
-                "name": "prague-trip",
-                "description": "second",
-                "recall": "off",
-            }
+        db.memories.create_collection("board-games", "first", Inclusion.NEVER, RecallMode.RECENT)
+        asyncio.run(
+            channel._handle_memory_create(
+                {
+                    "type": "memory_create",
+                    "name": "board-games",
+                    "description": "second",
+                    "recall": "off",
+                }
+            )
         )
-        memory = db.memories.get("prague-trip")
+        memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.description == "first"  # original wins, no overwrite
 
@@ -1463,35 +1474,38 @@ class TestBrowserMemoryHandlers:
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection(
-            "prague-trip",
+            "board-games",
             "old description",
-            RecallMode.OFF,
+            Inclusion.NEVER,
+            RecallMode.RECENT,
             extraction_prompt="old prompt",
             collector_interval_seconds=300,
         )
-        channel._handle_memory_update(
-            {
-                "type": "memory_update",
-                "name": "prague-trip",
-                "description": "new description",
-                "recall": None,
-                "extraction_prompt": None,
-                "collector_interval_seconds": None,
-            }
+        asyncio.run(
+            channel._handle_memory_update(
+                {
+                    "type": "memory_update",
+                    "name": "board-games",
+                    "description": "new description",
+                    "recall": None,
+                    "extraction_prompt": None,
+                    "collector_interval_seconds": None,
+                }
+            )
         )
-        memory = db.memories.get("prague-trip")
+        memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.description == "new description"
-        assert memory.recall == "off"
+        assert memory.recall == "recent"
         assert memory.extraction_prompt == "old prompt"
         assert memory.collector_interval_seconds == 300
 
     def test_memory_archive_marks_archived(self, tmp_path):
 
         channel, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
-        channel._handle_memory_archive({"type": "memory_archive", "name": "prague-trip"})
-        memory = db.memories.get("prague-trip")
+        db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
+        channel._handle_memory_archive({"type": "memory_archive", "name": "board-games"})
+        memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.archived is True
 
@@ -1500,51 +1514,51 @@ class TestBrowserMemoryHandlers:
         authored from collector-authored when reading the entries list."""
 
         channel, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
         channel._handle_entry_create(
             {
                 "type": "entry_create",
-                "memory": "prague-trip",
-                "key": "petrin-hill",
-                "content": "Hill with a tower",
+                "memory": "board-games",
+                "key": "catan",
+                "content": "Gateway strategy game",
             }
         )
-        entries = db.memories.read_latest("prague-trip")
+        entries = db.memories.read_latest("board-games")
         assert len(entries) == 1
-        assert entries[0].key == "petrin-hill"
-        assert entries[0].content == "Hill with a tower"
+        assert entries[0].key == "catan"
+        assert entries[0].content == "Gateway strategy game"
         assert entries[0].author == "user"
 
     def test_entry_update_replaces_content(self, tmp_path):
 
         channel, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
         db.memories.write(
-            "prague-trip",
-            [EntryInput(key="petrin-hill", content="old")],
+            "board-games",
+            [EntryInput(key="catan", content="old")],
             author="user",
         )
         channel._handle_entry_update(
             {
                 "type": "entry_update",
-                "memory": "prague-trip",
-                "key": "petrin-hill",
-                "content": "Hill with the lookout tower",
+                "memory": "board-games",
+                "key": "catan",
+                "content": "Gateway strategy game, updated",
             }
         )
-        entries = db.memories.get_entry("prague-trip", "petrin-hill")
-        assert entries[0].content == "Hill with the lookout tower"
+        entries = db.memories.get_entry("board-games", "catan")
+        assert entries[0].content == "Gateway strategy game, updated"
 
     def test_entry_delete_removes_row(self, tmp_path):
 
         channel, db = self._channel(tmp_path)
-        db.memories.create_collection("prague-trip", "x", RecallMode.OFF)
+        db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
         db.memories.write(
-            "prague-trip",
-            [EntryInput(key="petrin-hill", content="Hill")],
+            "board-games",
+            [EntryInput(key="catan", content="A classic")],
             author="user",
         )
         channel._handle_entry_delete(
-            {"type": "entry_delete", "memory": "prague-trip", "key": "petrin-hill"}
+            {"type": "entry_delete", "memory": "board-games", "key": "catan"}
         )
-        assert db.memories.get_entry("prague-trip", "petrin-hill") == []
+        assert db.memories.get_entry("board-games", "catan") == []

@@ -16,6 +16,7 @@ from penny.database import Database
 from penny.database.memory_store import (
     DedupThresholds,
     EntryInput,
+    Inclusion,
     LogEntryInput,
     MemoryNotFoundError,
     MemoryTypeError,
@@ -48,7 +49,7 @@ class TestMemoryMetadata:
     def test_create_collection_and_fetch(self, tmp_path):
         db = _make_db(tmp_path)
         memory = db.memories.create_collection(
-            "likes", "user positive preferences", RecallMode.RELEVANT
+            "likes", "user positive preferences", Inclusion.RELEVANT, RecallMode.RELEVANT
         )
         assert memory.name == "likes"
         assert memory.type == "collection"
@@ -61,15 +62,19 @@ class TestMemoryMetadata:
 
     def test_create_log_and_list(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("user-messages", "inbound user messages", RecallMode.RELEVANT)
-        db.memories.create_collection("dislikes", "user negative preferences", RecallMode.RELEVANT)
+        db.memories.create_log(
+            "user-messages", "inbound user messages", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
+        db.memories.create_collection(
+            "dislikes", "user negative preferences", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
 
         names = [s.name for s in db.memories.list_all()]
         assert names == ["dislikes", "user-messages"]
 
     def test_archive_and_unarchive(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("notes", "scratch", RecallMode.OFF)
+        db.memories.create_collection("notes", "scratch", Inclusion.NEVER, RecallMode.RECENT)
         db.memories.archive("notes")
         assert db.memories.get("notes").archived is True
         db.memories.unarchive("notes")
@@ -82,53 +87,55 @@ class TestMemoryMetadata:
 
     def test_unicode_name_normalization(self, tmp_path):
         db = _make_db(tmp_path)
-        # U+2011 NON-BREAKING HYPHEN — the exact character from the bug report
-        db.memories.create_collection("prague‑highlights", "travel", RecallMode.OFF)
+        # U+2011 NON-BREAKING HYPHEN — a unicode dash variant in the name
+        db.memories.create_collection("board‑games", "tabletop", Inclusion.NEVER, RecallMode.RECENT)
 
         # Stored name is normalized to ASCII hyphen
-        assert db.memories.get("prague-highlights") is not None
-        assert db.memories.get("prague‑highlights").name == "prague-highlights"
+        assert db.memories.get("board-games") is not None
+        assert db.memories.get("board‑games").name == "board-games"
 
         # Write via unicode name lands in the same collection — no duplicate created
         db.memories.write(
-            "prague‑highlights",
-            [EntryInput(key="castle", content="Prague castle was stunning")],
+            "board‑games",
+            [EntryInput(key="catan", content="Catan is a gateway classic")],
             author="test",
         )
-        assert len(db.memories.read_all("prague-highlights")) == 1
+        assert len(db.memories.read_all("board-games")) == 1
         assert len(db.memories.list_all()) == 1
 
     def test_collection_metadata_tool_returns_all_fields(self, tmp_path):
         db = _make_db(tmp_path)
         db.memories.create_collection(
-            "prague-highlights",
-            "travel highlights",
-            RecallMode.OFF,
+            "board-games",
+            "strategy board games",
+            Inclusion.NEVER,
+            RecallMode.RECENT,
             collector_interval_seconds=300,
-            extraction_prompt="Browse for Prague spots and write entries.",
+            extraction_prompt="Browse for new board games and write entries.",
         )
         tool = CollectionMetadataTool(db)
-        result = asyncio.run(tool.execute(memory="prague-highlights"))
-        assert "prague-highlights" in result
+        result = asyncio.run(tool.execute(memory="board-games"))
+        assert "board-games" in result
         assert "collection" in result
-        assert "travel highlights" in result
-        assert "off" in result
+        assert "strategy board games" in result
+        assert "inclusion: never" in result
+        assert "recall: recent" in result
         assert "300s" in result
-        assert "never" in result  # last collected
-        assert "Browse for Prague spots and write entries." in result
+        assert "last collected: never" in result
+        assert "Browse for new board games and write entries." in result
         assert "created:" in result
         assert "updated:" in result
 
     def test_collection_metadata_tool_no_extraction_prompt(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("plain", "no collector", RecallMode.OFF)
+        db.memories.create_collection("plain", "no collector", Inclusion.NEVER, RecallMode.RECENT)
         tool = CollectionMetadataTool(db)
         result = asyncio.run(tool.execute(memory="plain"))
         assert "extraction prompt: none" in result
 
     def test_updated_at_advances_on_metadata_update(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("col", "desc", RecallMode.OFF)
+        db.memories.create_collection("col", "desc", Inclusion.NEVER, RecallMode.RECENT)
         before = db.memories.get("col").updated_at
         db.memories.update_collection_metadata("col", description="new desc")
         after = db.memories.get("col").updated_at
@@ -144,7 +151,9 @@ class TestMemoryMetadata:
 class TestCollectionWrites:
     def test_write_returns_entry_ids(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
 
         results = db.memories.write(
             "likes",
@@ -170,7 +179,9 @@ class TestCollectionWrites:
 
     def test_write_dedups_on_key_embedding(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         shared_key_vec = _unit_vec(0)
 
         db.memories.write(
@@ -207,7 +218,9 @@ class TestCollectionWrites:
 
     def test_write_dedups_on_content_embedding(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         shared_content = _unit_vec(4)
 
         db.memories.write(
@@ -238,7 +251,9 @@ class TestCollectionWrites:
 
     def test_write_without_embeddings_always_accepts(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
 
         first = db.memories.write(
             "likes",
@@ -256,7 +271,9 @@ class TestCollectionWrites:
 
     def test_update_replaces_content(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         db.memories.write(
             "likes",
             [EntryInput(key="k", content="old body")],
@@ -269,20 +286,24 @@ class TestCollectionWrites:
 
     def test_update_not_found(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         assert db.memories.update("likes", "missing", "body", "chat") == "not_found"
 
     def test_delete_removes_all_matching(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "positive prefs", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "likes", "positive prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         db.memories.write("likes", [EntryInput(key="k", content="a")], author="chat")
         assert db.memories.delete("likes", "k") == 1
         assert db.memories.get_entry("likes", "k") == []
 
     def test_move_transfers_entry(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("unnotified", "pending", RecallMode.OFF)
-        db.memories.create_collection("notified", "done", RecallMode.RELEVANT)
+        db.memories.create_collection("unnotified", "pending", Inclusion.NEVER, RecallMode.RECENT)
+        db.memories.create_collection("notified", "done", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "unnotified", [EntryInput(key="thought-1", content="x")], author="thinking-agent"
         )
@@ -294,8 +315,8 @@ class TestCollectionWrites:
 
     def test_move_collision(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("a", "src", RecallMode.OFF)
-        db.memories.create_collection("b", "dst", RecallMode.OFF)
+        db.memories.create_collection("a", "src", Inclusion.NEVER, RecallMode.RECENT)
+        db.memories.create_collection("b", "dst", Inclusion.NEVER, RecallMode.RECENT)
         db.memories.write("a", [EntryInput(key="k", content="src")], author="chat")
         db.memories.write("b", [EntryInput(key="k", content="dst")], author="chat")
 
@@ -303,8 +324,8 @@ class TestCollectionWrites:
 
     def test_move_not_found(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("a", "src", RecallMode.OFF)
-        db.memories.create_collection("b", "dst", RecallMode.OFF)
+        db.memories.create_collection("a", "src", Inclusion.NEVER, RecallMode.RECENT)
+        db.memories.create_collection("b", "dst", Inclusion.NEVER, RecallMode.RECENT)
         assert db.memories.move("missing", "a", "b", author="chat") == "not_found"
 
 
@@ -313,7 +334,9 @@ class TestDegenerateContentRejection:
 
     def _make_collection(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("knowledge", "web summaries", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "knowledge", "web summaries", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         return db
 
     def test_pure_punctuation_rejected(self, tmp_path):
@@ -420,7 +443,7 @@ class TestDegenerateContentRejection:
 class TestLogAppend:
     def test_append_multiple_entries_stored_in_order(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("user-messages", "inbound", RecallMode.RELEVANT)
+        db.memories.create_log("user-messages", "inbound", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.append(
             "user-messages",
             [
@@ -437,13 +460,13 @@ class TestLogAppend:
 
     def test_append_to_collection_raises(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         with pytest.raises(MemoryTypeError):
             db.memories.append("likes", [LogEntryInput(content="nope")], author="user")
 
     def test_write_to_log_raises(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RECENT)
+        db.memories.create_log("events", "x", Inclusion.ALWAYS, RecallMode.RECENT)
         with pytest.raises(MemoryTypeError):
             db.memories.write(
                 "events",
@@ -455,7 +478,7 @@ class TestLogAppend:
 class TestReads:
     def test_read_latest(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RECENT)
+        db.memories.create_log("events", "x", Inclusion.ALWAYS, RecallMode.RECENT)
         for i in range(5):
             db.memories.append("events", [LogEntryInput(content=f"msg-{i}")], author="user")
 
@@ -464,7 +487,7 @@ class TestReads:
 
     def test_read_since(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RECENT)
+        db.memories.create_log("events", "x", Inclusion.ALWAYS, RecallMode.RECENT)
         db.memories.append("events", [LogEntryInput(content="early")], author="user")
         mid = datetime.now(UTC)
         db.memories.append("events", [LogEntryInput(content="late")], author="user")
@@ -474,7 +497,7 @@ class TestReads:
 
     def test_read_random_returns_all_when_k_exceeds(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write("likes", [EntryInput(key="a", content="1")], author="chat")
         db.memories.write("likes", [EntryInput(key="b", content="2")], author="chat")
         picked = db.memories.read_random("likes", 5)
@@ -482,14 +505,14 @@ class TestReads:
 
     def test_read_random_no_k_returns_all(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write("likes", [EntryInput(key="a", content="1")], author="chat")
         db.memories.write("likes", [EntryInput(key="b", content="2")], author="chat")
         assert {e.key for e in db.memories.read_random("likes")} == {"a", "b"}
 
     def test_read_random_samples_subset_deterministically(self, tmp_path, monkeypatch):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         for letter in ("a", "b", "c", "d"):
             db.memories.write("likes", [EntryInput(key=letter, content=letter)], author="chat")
 
@@ -510,7 +533,7 @@ class TestReads:
 
     def test_read_similar_orders_by_cosine(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0, 0.0, 0.0]
         db.memories.write(
             "likes",
@@ -539,7 +562,7 @@ class TestReads:
 
     def test_read_similar_respects_floor(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0]
         db.memories.write(
             "likes",
@@ -560,7 +583,7 @@ class TestReads:
         AND high projection on the corpus centroid is demoted below a less
         central entry whose cosine to the anchor is slightly lower."""
         db = _make_db(tmp_path)
-        db.memories.create_collection("notes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("notes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0, 0.0]
         db.memories.write(
             "notes",
@@ -603,7 +626,7 @@ class TestReads:
         anchor (head_mean ≈ sample_mean) returns empty rather than emitting
         the noise floor."""
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        db.memories.create_log("events", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0, 0.0]
         # Twenty entries with identical content embeddings — every adjusted
         # score is the same, so head_mean / sample_mean = 1.0, well below
@@ -622,7 +645,7 @@ class TestReads:
         the anchor, the gate passes and only the cluster — not the noise
         floor — is returned."""
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        db.memories.create_log("events", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0, 0.0]
         # 5 strong matches (cos ≈ 0.95)
         for i in range(5):
@@ -651,7 +674,7 @@ class TestReads:
         crowding out the real topical hits.
         """
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RELEVANT)
+        db.memories.create_log("events", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         anchor = [1.0, 0.0, 0.0]
 
         # Junk entries that would otherwise dominate (1–4 words, high cosine)
@@ -669,7 +692,7 @@ class TestReads:
             author="chat",
         )
 
-        hits = db.memories.read_similar_hybrid("events", [anchor])
+        hits = db.memories.read_similar_hybrid("events", [anchor], "coffee")
         contents = [e.content for e in hits]
         assert real in contents
         for junk in ("", "?", "Hey!", "hi penny"):
@@ -677,7 +700,7 @@ class TestReads:
 
     def test_keys_returns_unique_in_insertion_order(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write("likes", [EntryInput(key="first", content="1")], author="chat")
         db.memories.write("likes", [EntryInput(key="second", content="2")], author="chat")
         assert db.memories.keys("likes") == ["first", "second"]
@@ -686,7 +709,7 @@ class TestReads:
 class TestExists:
     def test_exists_by_exact_key(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write("likes", [EntryInput(key="dark roast", content="body")], author="chat")
 
         assert db.memories.exists(["likes"], "dark roast", None, None) is True
@@ -694,8 +717,8 @@ class TestExists:
 
     def test_exists_by_similarity_across_stores(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("unnotified", "pending", RecallMode.OFF)
-        db.memories.create_collection("notified", "done", RecallMode.RELEVANT)
+        db.memories.create_collection("unnotified", "pending", Inclusion.NEVER, RecallMode.RECENT)
+        db.memories.create_collection("notified", "done", Inclusion.RELEVANT, RecallMode.RELEVANT)
         shared = _unit_vec(2)
         db.memories.write(
             "notified",
@@ -723,7 +746,7 @@ class TestExists:
 class TestCursorStore:
     def test_advance_and_get(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("user-messages", "inbound", RecallMode.RELEVANT)
+        db.memories.create_log("user-messages", "inbound", Inclusion.RELEVANT, RecallMode.RELEVANT)
         now = datetime.now(UTC)
         db.cursors.advance_committed("preference-extractor", "user-messages", now)
 
@@ -731,7 +754,7 @@ class TestCursorStore:
 
     def test_advance_is_monotonic(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("user-messages", "inbound", RecallMode.RELEVANT)
+        db.memories.create_log("user-messages", "inbound", Inclusion.RELEVANT, RecallMode.RELEVANT)
         later = datetime.now(UTC)
         earlier = later - timedelta(minutes=5)
 
@@ -764,7 +787,7 @@ class TestMediaStore:
 class TestWriteTypeEnforcement:
     def test_write_requires_collection(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_log("events", "x", RecallMode.RECENT)
+        db.memories.create_log("events", "x", Inclusion.ALWAYS, RecallMode.RECENT)
         with pytest.raises(MemoryTypeError):
             db.memories.write("events", [EntryInput(key="k", content="v")], author="chat")
 
@@ -775,7 +798,7 @@ class TestWriteTypeEnforcement:
 
     def test_dedup_thresholds_configurable(self, tmp_path):
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "likes",
             [
@@ -819,7 +842,7 @@ class TestDedupSignals:
     def test_tcr_strict_alone_rejects(self, tmp_path):
         """Full token-subset on keys fires without any embeddings."""
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "likes",
             [EntryInput(key="dark roast", content="first body")],
@@ -835,7 +858,7 @@ class TestDedupSignals:
     def test_tcr_relaxed_alone_does_not_fire(self, tmp_path):
         """TCR 2/3 with no other signal is not enough on its own."""
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "likes",
             [EntryInput(key="applied ai conference", content="first")],
@@ -851,7 +874,7 @@ class TestDedupSignals:
     def test_two_relaxed_signals_reject(self, tmp_path):
         """TCR 2/3 plus a relaxed content-cosine hit (~0.80) → duplicate."""
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "likes",
             [
@@ -882,7 +905,7 @@ class TestDedupSignals:
     def test_single_relaxed_signal_passes(self, tmp_path):
         """One signal at relaxed level only (no second signal) is not enough."""
         db = _make_db(tmp_path)
-        db.memories.create_collection("likes", "x", RecallMode.RELEVANT)
+        db.memories.create_collection("likes", "x", Inclusion.RELEVANT, RecallMode.RELEVANT)
         db.memories.write(
             "likes",
             [
@@ -920,21 +943,25 @@ class TestEmbeddingBackfill:
     def test_scopes_to_relevant_unarchived_and_persists(self, tmp_path):
         db = _make_db(tmp_path)
         # A relevant collection (skills-like): entries SHOULD be embedded.
-        db.memories.create_collection("skills", "workflow patterns", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "skills", "workflow patterns", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         db.memories.write(
             "skills",
             [EntryInput(key="Do X when Y", content="TRIGGER ... STEPS ...")],
             author="system",
         )
         # An off log (collector-runs-like): never surfaces → must be skipped.
-        db.memories.create_log("collector-runs", "cycle log", RecallMode.OFF)
+        db.memories.create_log("collector-runs", "cycle log", Inclusion.NEVER, RecallMode.RECENT)
         db.memories.append(
             "collector-runs",
             [LogEntryInput(content="cycle summary")],
             author="collector",
         )
         # An archived collection: never surfaces → must be skipped.
-        db.memories.create_collection("old-trip", "archived", RecallMode.RELEVANT)
+        db.memories.create_collection(
+            "old-trip", "archived", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
         db.memories.write(
             "old-trip",
             [EntryInput(key="spot", content="some place")],

@@ -18,7 +18,7 @@ import pytest
 
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import LogEntryInput, RecallMode
+from penny.database.memory_store import Inclusion, LogEntryInput, RecallMode
 from penny.tools.send_message import SendMessageTool, _appears_truncated
 
 _PENNY_LOG = PennyConstants.MEMORY_PENNY_MESSAGES_LOG
@@ -33,8 +33,8 @@ def _make_db(tmp_path) -> Database:
     db.create_tables()
     # The cooldown helper reads the system penny-messages and user-messages
     # logs; create them up-front so the tool's lookups don't ImportError.
-    db.memories.create_log(_PENNY_LOG, "outbound", RecallMode.OFF)
-    db.memories.create_log(_USER_LOG, "inbound", RecallMode.OFF)
+    db.memories.create_log(_PENNY_LOG, "outbound", Inclusion.NEVER, RecallMode.RECENT)
+    db.memories.create_log(_USER_LOG, "inbound", Inclusion.NEVER, RecallMode.RECENT)
     return db
 
 

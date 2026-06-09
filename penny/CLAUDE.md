@@ -174,7 +174,12 @@ The base `Agent` class implements the core agentic loop:
 **System prompt building (template method pattern):**
 Each agent overrides `_build_system_prompt(user)` to compose its prompt from reusable building blocks on the base class: `_identity_section()`, `_profile_section()`, `_instructions_section()`, `_context_block()`. No flags or conditionals — each agent explicitly declares what goes in its prompt. Tests assert on the exact full system prompt string to catch structural drift.
 
-**Memory recall** is the single mechanism for surfacing memory contents in the system prompt: every active memory is rendered into the prompt according to its own `recall` flag (off / recent / relevant / all) by the recall block (`agents/recall.py`). Chat agents call `build_recall_block` and slot the result into the context block alongside profile and page hint. There is no bespoke per-section retrieval — knowledge, likes, dislikes, notified-thoughts, etc. all surface via this one path.
+**Memory recall** is the single mechanism for surfacing memory contents in the system prompt, assembled in **two stages** (`_recall_section` in `agents/chat.py`):
+
+1. **Stage 1 — collection routing** (`inclusion` flag: `always` / `relevant` / `never`): decides whether a memory participates at all. `always` is unconditional; `relevant` participates only when the conversation window embeds close to the memory's content-reflective `description` anchor (cosine ≥ `MEMORY_INCLUSION_THRESHOLD`, default 0.40); `never` is excluded. This is the prompt-shortening gate — off-topic collections drop out entirely.
+2. **Stage 2 — entry rendering** (`recall` flag: `all` / `relevant` / `recent`): for each included memory, picks which entries surface. `recent` is the newest-first slice; `all` is the full set; `relevant` is a hybrid ranking (embedding cosine fused with IDF-weighted lexical coverage via reciprocal-rank fusion, top-N, **no floor** — stage 1 already decided relevance). Lexical fusion surfaces instruction-shaped entries (skills, recipes) whose absolute cosine is low but whose vocabulary overlaps the query.
+
+There is no bespoke per-section retrieval — knowledge, likes, dislikes, notified-thoughts, skills, etc. all surface via this one path. The two flags are orthogonal: e.g. `inclusion=relevant, recall=all` shows every entry but only when the conversation is on-topic.
 
 The chat turns array (alternating user/assistant messages passed via `history=`) is independent of the recall flag — it is reconstructed from the last N messages in `db.messages` regardless of which memories are active.
 
@@ -191,7 +196,7 @@ All `LlmClient` instances are created centrally in `Penny.__init__()` and shared
 
 **ChatAgent** (`agents/chat.py`)
 - Handles incoming user messages with the full tool surface
-- Prompt: identity + (profile + recall block + page hint) + instructions; recall block injects every active memory by its own `recall` flag
+- Prompt: identity + (profile + recall block + page hint) + instructions; recall block routes memories by `inclusion` (stage 1) then renders entries by `recall` (stage 2)
 - Conversation history flows independently as alternating user/assistant turns passed via `history=`
 - Vision captioning: when images are present and vision model is configured, captions the image first, then forwards a combined prompt to the text LLM
 
@@ -324,7 +329,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Thought**: Inner monologue entries — `content` (full monologue), `title`, `image`, `valence`, `preference_id` FK (seed preference), `run_id`, `notified_at`
 - **Preference**: User sentiment signals — `content`, `valence` (positive/negative), `source` (manual/extracted), `mention_count`, `embedding` (serialized float32 vector), `last_thought_at`. Extracted preferences must reach `PREFERENCE_MENTION_THRESHOLD` mentions before becoming thinking candidates; manual (`/like`) preferences bypass this gate
 - **Knowledge**: Summarized web page content — `url` (unique), `title`, `summary` (prose paragraph), `embedding`, `source_prompt_id` FK (extraction watermark). One entry per URL, upserted on revisit
-- **Memory**: Unified container for the task/memory framework — `name` (PK), `type` (`collection` or `log`), `description`, `recall` (`off` / `recent` / `relevant` / `all`), `archived`. Collections are keyed sets with dedup on write; logs are append-only keyless streams
+- **Memory**: Unified container for the task/memory framework — `name` (PK), `type` (`collection` or `log`), `description` (content-reflective; doubles as the stage-1 routing anchor), `description_embedding` (the anchor vector, backfilled at startup), `inclusion` (stage-1 routing: `always` / `relevant` / `never`), `recall` (stage-2 entry rendering: `all` / `relevant` / `recent`), `archived`. Collections are keyed sets with dedup on write; logs are append-only keyless streams
 - **MemoryEntry**: One entry in a memory — `memory_name` FK, `key` (nullable for logs), `content`, `author`, `key_embedding`, `content_embedding`. Entries are immutable once written — `update` replaces content for a given key
 - **AgentCursor**: Per-agent read progress through a log-shaped memory — `(agent_name, memory_name)` PK, `last_read_at` high-water mark. Advanced two-phase by the orchestrator (pending during a run, committed on success)
 - **Media**: Binary blobs (images, etc.) referenced by `<media:ID>` tokens in memory entry content — `mime_type`, `data`, `source_url`
@@ -421,6 +426,7 @@ Notable migrations:
 - 0029: Re-enable ambient recall for `penny-messages` — chat-turn duplication is now handled by the self-match exclusion (#1006) and short-anchor noise by the low-info filter, so historical Penny replies should surface again
 - 0030–0042: extraction-prompt fixes and incremental collector/collection tweaks (see individual files)
 - 0043: Seed the `skills` collection — workflow patterns (TRIGGER + STEPS) the chat agent follows via recall, plus a collector that extracts/refines/removes skills from chat over time
+- 0044: Split the single `recall` flag into two-stage recall — add `inclusion` (`always`/`relevant`/`never`, stage-1 routing) and `description_embedding` columns, derive inclusion from the old recall value (off→never, recent/all→always, relevant→relevant), collapse `recall=off`→`recent`, and force `skills`/`user-messages`/`penny-messages`/`user-profile` to `inclusion=always`
 
 ## Extending
 

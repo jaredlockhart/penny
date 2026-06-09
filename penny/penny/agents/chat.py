@@ -11,11 +11,13 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from similarity.embeddings import cosine_similarity, deserialize_embedding
+
 from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.channels.base import PageContext
 from penny.constants import ChatPromptType, PennyConstants
-from penny.database.memory_store import MemoryType, RecallMode
+from penny.database.memory_store import Inclusion, MemoryType, RecallMode
 from penny.database.models import Memory, MemoryEntry
 from penny.llm.models import LlmError
 from penny.prompts import Prompt
@@ -35,8 +37,9 @@ class ChatAgent(Agent):
 
     Two context mechanisms, kept independent:
 
-    - Memory stores → system prompt via the recall block, each memory
-      rendered by its own ``recall`` flag (off / recent / relevant / all).
+    - Memory stores → system prompt via the recall block: stage-1
+      ``inclusion`` routing (always / relevant / never) then stage-2
+      ``recall`` entry rendering (all / relevant / recent).
     - Chat turns → messages array as alternating user/assistant turns
       via ``_build_conversation`` and ``history=``.
 
@@ -184,12 +187,11 @@ class ChatAgent(Agent):
 
         Chat extends the base envelope with two chat-only sections:
 
-        - **Ambient recall**: each active memory rendered into the prompt
-          per its ``recall`` flag (off / recent / relevant / all).
-          Relevant-mode scores against the conversation window with
-          hybrid (weighted-decay-over-history vs. cosine-to-current)
-          similarity so vague follow-ups still pull in topic-relevant
-          memory.
+        - **Ambient recall**: two-stage — stage-1 ``inclusion`` routing
+          (always / relevant-by-description-anchor / never) decides which
+          memories participate, then stage-2 ``recall`` (all / relevant /
+          recent) renders their entries; relevant-mode ranks entries against
+          the conversation window with hybrid cosine+lexical similarity.
         - **Browser page hint**: when the user is on a page with the
           extension active.
 
@@ -245,40 +247,82 @@ class ChatAgent(Agent):
         current_message: str | None,
         conversation_history: list[str] | None = None,
         limit: int = 99,
-        similarity_floor: float = 0.0,
     ) -> str | None:
-        """Ambient recall content for all active memories.
+        """Ambient recall content, assembled in two stages.
 
-        Renders verbatim entries from each non-archived memory whose
-        ``recall`` mode is not ``'off'``.  Each memory is rendered by mode:
+        Stage 1 (collection routing) — each active memory's ``inclusion`` flag
+        decides whether it participates: ``always`` unconditionally,
+        ``relevant`` only when the conversation embeds close to the memory's
+        description anchor, ``never`` not at all (already excluded).
 
-          off      — skipped
+        Stage 2 (entry rendering) — for each included memory, its ``recall``
+        mode picks which entries surface:
+
           recent   — newest-first slice (``read_latest``)
-          relevant — hybrid similarity over the conversation window
-                     (``read_similar_hybrid``; skipped without embedding)
+          relevant — hybrid cosine+lexical ranking over the conversation
+                     window (``read_similar_hybrid``; skipped without embedding)
           all      — full set in insertion order (``read_all``)
-
-        Relevant-mode recall scores each candidate as
-        ``max(weighted_decay_over_history, cosine_to_current) - α · centroid_proxy``.
-        Strong direct hits on the current message stand alone; vague
-        follow-ups still benefit from earlier conversation drift.
         """
         anchors = await self._embed_conversation_anchors(current_message, conversation_history)
         anchor_contents = self._anchor_contents(current_message, conversation_history)
+        query_text = " ".join(
+            t for t in [*(conversation_history or []), current_message or ""] if t
+        )
         sections: list[str] = []
         for memory in self._active_memories():
+            if not self._passes_inclusion(memory, anchors):
+                continue
             section = self._render_recall_memory(
-                memory, anchors, similarity_floor, limit, anchor_contents
+                memory, anchors, query_text, limit, anchor_contents
             )
             if section:
                 sections.append(section)
         return "\n\n".join(sections) if sections else None
 
     def _active_memories(self) -> list[Memory]:
-        """Non-archived memories with recall != 'off'."""
+        """Non-archived memories that are routable (inclusion != 'never')."""
         return [
-            m for m in self.db.memories.list_all() if not m.archived and m.recall != RecallMode.OFF
+            m
+            for m in self.db.memories.list_all()
+            if not m.archived and m.inclusion != Inclusion.NEVER
         ]
+
+    def _passes_inclusion(self, memory: Memory, anchors: list[list[float]] | None) -> bool:
+        """Stage-1 gate: does this memory participate in recall for this turn.
+
+        ``always`` always passes; ``relevant`` passes only when the best cosine
+        between the conversation window and the memory's description anchor
+        clears ``MEMORY_INCLUSION_THRESHOLD``.  Fails open (includes) when there
+        is no embedding to compare — no anchors (no embedding model / cold
+        message) or no description anchor yet (pre-backfill) — so a missing
+        vector never silently drops a collection.
+        """
+        inclusion = Inclusion(memory.inclusion)
+        if inclusion == Inclusion.ALWAYS:
+            return True
+        if inclusion == Inclusion.NEVER:
+            return False
+        if anchors is None or memory.description_embedding is None:
+            return True
+        description_anchor = deserialize_embedding(memory.description_embedding)
+        threshold = float(self.config.runtime.MEMORY_INCLUSION_THRESHOLD)
+        return max(cosine_similarity(a, description_anchor) for a in anchors) >= threshold
+
+    async def embed_description(self, text: str) -> list[float] | None:
+        """Embed a memory description into its stage-1 routing anchor.
+
+        Exposed for the browser channel's memory create/edit path, which —
+        unlike the chat tool surface — has no embedding client of its own.
+        Returns None when no embedding model is configured or the call fails.
+        """
+        if self._embedding_model_client is None:
+            return None
+        try:
+            vecs = await self._embedding_model_client.embed([text])
+            return vecs[0]
+        except LlmError:
+            logger.warning("Failed to embed memory description")
+            return None
 
     async def _embed_conversation_anchors(
         self, current_message: str | None, history: list[str] | None
@@ -318,7 +362,7 @@ class ChatAgent(Agent):
         self,
         memory: Memory,
         anchors: list[list[float]] | None,
-        similarity_floor: float,
+        query_text: str,
         limit: int,
         anchor_contents: set[str],
     ) -> str | None:
@@ -327,9 +371,7 @@ class ChatAgent(Agent):
         if mode == RecallMode.RECENT:
             entries = self.db.memories.read_latest(memory.name, k=limit)
         elif mode == RecallMode.RELEVANT:
-            entries = self._relevant_entries(
-                memory, anchors, similarity_floor, limit, anchor_contents
-            )
+            entries = self._relevant_entries(memory, anchors, query_text, limit, anchor_contents)
         elif mode == RecallMode.ALL:
             entries = self.db.memories.read_all(memory.name)[:limit]
         else:
@@ -342,31 +384,31 @@ class ChatAgent(Agent):
         self,
         memory: Memory,
         anchors: list[list[float]] | None,
-        floor: float,
+        query_text: str,
         limit: int,
         anchor_contents: set[str],
     ) -> list[MemoryEntry]:
-        """Run hybrid similarity, expanding logs with their temporal neighbors.
+        """Run stage-2 hybrid ranking, expanding logs with temporal neighbors.
 
-        For log-shaped memories the similarity hits are augmented with every
-        entry within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
+        For log-shaped memories the hybrid hits are augmented with every entry
+        within ±``MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES`` of any hit's
         timestamp, so a single keyword match pulls in the surrounding
         conversation rather than a single line stripped of context.
 
-        ``anchor_contents`` (the texts being used as anchors) are filtered
-        out of the corpus before scoring — channel ingress writes user/penny
+        ``anchor_contents`` (the texts being used as anchors) are filtered out
+        of the corpus before scoring — channel ingress writes user/penny
         messages into log memories, so without exclusion any anchor that
-        matches an existing entry would self-match at cosine ≈ 1.0 and
-        dominate the hit list.  Collections aren't written to from channel
-        ingress, so the filter is a no-op for them.
+        matches an existing entry would self-match at cosine ≈ 1.0 and dominate
+        the hit list.  Collections aren't written to from channel ingress, so
+        the filter is a no-op for them.
         """
         if not anchors:
             return []
         hits = self.db.memories.read_similar_hybrid(
             memory.name,
             anchors,
+            query_text,
             k=limit,
-            floor=floor,
             exclude_contents=anchor_contents or None,
         )
         if not hits or memory.type != MemoryType.LOG.value:

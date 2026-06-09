@@ -26,6 +26,7 @@ from penny.database import Database
 from penny.database.memory_store import (
     DedupThresholds,
     EntryInput,
+    Inclusion,
     LogEntryInput,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_INCLUSION_MODES = ", ".join(m.value for m in Inclusion)
 _RECALL_MODES = ", ".join(m.value for m in RecallMode)
 EXTRACTION_PROMPT_MIN_CHARS = 25
 
@@ -126,6 +128,7 @@ def _format_collection_echo(memory: Any, verb: str) -> str:
         f"{verb} collection '{memory.name}':\n"
         f"  interval: {memory.collector_interval_seconds}s "
         f"({_humanize_interval(memory.collector_interval_seconds)})\n"
+        f"  inclusion: {memory.inclusion}\n"
         f"  recall: {memory.recall}\n"
         f"  description: {memory.description}\n"
         f"  extraction_prompt: |\n    "
@@ -159,9 +162,21 @@ class CollectionCreateTool(Tool):
         "\n"
         "Fields:\n"
         "- ``name`` — unique slug (lowercase, hyphens).\n"
-        "- ``description`` — one-line summary shown in the memory registry.\n"
-        f"- ``recall`` ({_RECALL_MODES}) — controls how the chat agent "
-        "surfaces this collection's entries in ambient context.\n"
+        "- ``description`` — a content-reflective one-line summary of what "
+        "this collection holds.  This IS the routing anchor: a "
+        "relevant-inclusion collection is only surfaced when the conversation "
+        'matches this text, so describe the actual subject matter ("heavy '
+        'euro-style strategy board games"), not the mechanism ("a collection '
+        'that stores games").\n'
+        f"- ``inclusion`` ({_INCLUSION_MODES}) — stage-1 routing.  ``always``: "
+        "always in recall (identity, conventions).  ``relevant``: in only when "
+        "the conversation matches the description — the default for research "
+        "collections.  ``never``: silent — never surfaced in chat, only its "
+        "collector runs in the background.\n"
+        f"- ``recall`` ({_RECALL_MODES}) — stage-2 entry rendering once a "
+        "collection is included.  ``relevant`` ranks entries against the "
+        "conversation (default), ``recent`` shows newest, ``all`` shows every "
+        "entry.\n"
         "- ``extraction_prompt`` — REQUIRED.  The system prompt the "
         "collector subagent runs each cycle.  Numbered list of explicit "
         "tool calls works best; flowing prose loses the model.  The runtime "
@@ -189,12 +204,29 @@ class CollectionCreateTool(Tool):
             },
             "description": {
                 "type": "string",
-                "description": "One-line summary shown in the memory registry",
+                "description": (
+                    "Content-reflective one-line summary of what this "
+                    "collection holds — the stage-1 routing anchor. Describe "
+                    "the subject matter, not the mechanism."
+                ),
+            },
+            "inclusion": {
+                "type": "string",
+                "enum": [m.value for m in Inclusion],
+                "description": (
+                    "Stage-1 routing: 'always' (always in recall), 'relevant' "
+                    "(in only when the conversation matches the description — "
+                    "the usual choice), 'never' (silent background collector)."
+                ),
             },
             "recall": {
                 "type": "string",
                 "enum": [m.value for m in RecallMode],
-                "description": "How the chat agent surfaces this collection in ambient context",
+                "description": (
+                    "Stage-2 entry rendering once included: 'relevant' ranks "
+                    "entries to the conversation, 'recent' newest, 'all' every "
+                    "entry."
+                ),
             },
             "extraction_prompt": {
                 "type": "string",
@@ -216,26 +248,31 @@ class CollectionCreateTool(Tool):
         "required": [
             "name",
             "description",
+            "inclusion",
             "recall",
             "extraction_prompt",
             "collector_interval_seconds",
         ],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
         self._db = db
+        self._llm_client = llm_client
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionCreateArgs(**kwargs)
         if error := check_extraction_prompt(args.extraction_prompt):
             return error
+        description_embedding = await embed_text(self._llm_client, args.description)
         try:
             memory = self._db.memories.create_collection(
                 args.name,
                 args.description,
+                Inclusion(args.inclusion),
                 RecallMode(args.recall),
                 extraction_prompt=args.extraction_prompt,
                 collector_interval_seconds=args.collector_interval_seconds,
+                description_embedding=description_embedding,
             )
         except MemoryAlreadyExistsError:
             return f"Collection '{args.name}' already exists."
@@ -249,29 +286,49 @@ class LogCreateTool(Tool):
     description = (
         "Create a new append-only log. Logs store keyless entries in time order "
         "and are meant for streams of events (messages, measurements, etc.). "
-        f"Provide a short description and a recall mode ({_RECALL_MODES})."
+        f"Provide a content-reflective description, an inclusion mode "
+        f"({_INCLUSION_MODES}), and an entry-recall mode ({_RECALL_MODES})."
     )
     parameters = {
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "Unique log name"},
-            "description": {"type": "string", "description": "One-line summary"},
+            "description": {
+                "type": "string",
+                "description": "Content-reflective one-line summary (stage-1 routing anchor)",
+            },
+            "inclusion": {
+                "type": "string",
+                "enum": [m.value for m in Inclusion],
+                "description": (
+                    "Stage-1 routing: 'always', 'relevant' (matches the "
+                    "description), or 'never' (silent)."
+                ),
+            },
             "recall": {
                 "type": "string",
                 "enum": [m.value for m in RecallMode],
-                "description": "How the chat agent surfaces this log in ambient context",
+                "description": "Stage-2 entry rendering: 'relevant', 'recent', or 'all'.",
             },
         },
-        "required": ["name", "description", "recall"],
+        "required": ["name", "description", "inclusion", "recall"],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
         self._db = db
+        self._llm_client = llm_client
 
     async def execute(self, **kwargs: Any) -> str:
         args = LogCreateArgs(**kwargs)
+        description_embedding = await embed_text(self._llm_client, args.description)
         try:
-            self._db.memories.create_log(args.name, args.description, RecallMode(args.recall))
+            self._db.memories.create_log(
+                args.name,
+                args.description,
+                Inclusion(args.inclusion),
+                RecallMode(args.recall),
+                description_embedding=description_embedding,
+            )
         except MemoryAlreadyExistsError:
             return f"Log '{args.name}' already exists."
         return f"Created log '{args.name}'."
@@ -624,10 +681,16 @@ class CollectionUpdateTool(Tool):
         "\n"
         "Fields:\n"
         "- ``name`` (required) — the collection to update.\n"
-        "- ``description`` — cosmetic one-line summary. Does NOT drive "
-        "collector behavior; update for consistency, not as a substitute "
-        "for changing the extraction_prompt body.\n"
-        f"- ``recall`` ({_RECALL_MODES}) — controls ambient surfacing.\n"
+        "- ``description`` — content-reflective one-line summary AND the "
+        "stage-1 routing anchor. Changing it re-embeds and re-routes when "
+        "the collection surfaces, so keep it an accurate summary of the "
+        "subject matter. It does not drive the collector — change the "
+        "extraction_prompt for that.\n"
+        f"- ``inclusion`` ({_INCLUSION_MODES}) — stage-1 routing. Flip to "
+        "'never' to silence a collection (its collector still runs); 'always' "
+        "to always surface it; 'relevant' to gate on the description.\n"
+        f"- ``recall`` ({_RECALL_MODES}) — stage-2 entry rendering once "
+        "included.\n"
         "- ``extraction_prompt`` — FULL replacement body, not a diff. "
         "Drives what the collector actually does. Read the current body "
         "via ``collection_metadata`` first if you need to preserve any "
@@ -650,18 +713,26 @@ class CollectionUpdateTool(Tool):
             "description": {
                 "type": "string",
                 "description": (
-                    "One-line summary for the memory registry. Cosmetic — "
-                    "does not drive collector behavior. Update for "
-                    "consistency with extraction_prompt, not as a "
-                    "substitute for it."
+                    "Content-reflective one-line summary AND the stage-1 "
+                    "routing anchor — changing it re-embeds and re-routes "
+                    "the collection. Keep it an accurate summary of the "
+                    "subject matter."
+                ),
+            },
+            "inclusion": {
+                "type": "string",
+                "enum": [m.value for m in Inclusion],
+                "description": (
+                    "Stage-1 routing: 'never' silences a collection (collector "
+                    "still runs), 'always' always surfaces it, 'relevant' gates "
+                    "on the description."
                 ),
             },
             "recall": {
                 "type": "string",
                 "enum": [m.value for m in RecallMode],
                 "description": (
-                    "How the chat agent surfaces this collection in "
-                    'ambient context. "off" for silent collections.'
+                    "Stage-2 entry rendering once included: 'relevant', 'recent', or 'all'."
                 ),
             },
             "extraction_prompt": {
@@ -684,21 +755,31 @@ class CollectionUpdateTool(Tool):
         "required": ["name"],
     }
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, llm_client: LlmClient | None) -> None:
         self._db = db
+        self._llm_client = llm_client
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionUpdateArgs(**kwargs)
         if error := check_extraction_prompt(args.extraction_prompt):
             return error
+        inclusion = Inclusion(args.inclusion) if args.inclusion is not None else None
         recall = RecallMode(args.recall) if args.recall is not None else None
+        # Re-embed the routing anchor whenever the description changes.
+        description_embedding = (
+            await embed_text(self._llm_client, args.description)
+            if args.description is not None
+            else None
+        )
         try:
             memory = self._db.memories.update_collection_metadata(
                 args.name,
                 description=args.description,
+                inclusion=inclusion,
                 recall=recall,
                 extraction_prompt=args.extraction_prompt,
                 collector_interval_seconds=args.collector_interval_seconds,
+                description_embedding=description_embedding,
             )
         except MemoryNotFoundError:
             return f"Collection '{args.name}' not found."
@@ -749,6 +830,7 @@ class CollectionMetadataTool(Tool):
             f"name: {memory.name}",
             f"type: {memory.type}",
             f"description: {memory.description}",
+            f"inclusion: {memory.inclusion}",
             f"recall: {memory.recall}",
             f"archived: {memory.archived}",
             f"created: {created}",
@@ -1092,11 +1174,10 @@ class ExistsTool(Tool):
         # When the model probes with content but no key, treat the content
         # as a name-like probe — using it as both ``key`` and ``content``
         # lets the dedup's key-TCR signal fire against existing entries
-        # whose ``key`` matches.  Without this, ``exists(content="Kepler
-        # Museum")`` returned "no" against an existing ``key="Kepler
-        # Museum"`` because content-cosine alone (candidate "Kepler
-        # Museum" vs the existing entry's long description) sat below
-        # the strict threshold.
+        # whose ``key`` matches.  Without this, ``exists(content="Catan")``
+        # returned "no" against an existing ``key="Catan"`` because
+        # content-cosine alone (candidate "Catan" vs the existing entry's
+        # long description) sat below the strict threshold.
         key = args.key if args.key else args.content
         key_vec = await embed_text(self._llm, key)
         content_vec = await embed_text(self._llm, args.content)
@@ -1238,11 +1319,11 @@ def build_memory_tools(
         ]
     # Chat: reads + lifecycle, no entry mutations
     return [
-        CollectionCreateTool(db),
-        CollectionUpdateTool(db),
+        CollectionCreateTool(db, llm_client),
+        CollectionUpdateTool(db, llm_client),
         CollectionMergeTool(db, agent_name),
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
-        LogCreateTool(db),
+        LogCreateTool(db, llm_client),
         *reads,
     ]

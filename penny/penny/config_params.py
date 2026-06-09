@@ -211,6 +211,19 @@ ConfigParam(
 )
 
 ConfigParam(
+    key="MEMORY_INCLUSION_THRESHOLD",
+    description=(
+        "Stage-1 routing gate: minimum cosine between the conversation and a "
+        "relevant-inclusion memory's description anchor for it to participate "
+        "in recall"
+    ),
+    type=float,
+    default=0.40,
+    validator=_validate_unit_float,
+    group=GROUP_MEMORY,
+)
+
+ConfigParam(
     key="MEMORY_DEDUP_KEY_TCR_STRICT",
     description="Strict key token-containment threshold for memory dedup",
     type=float,

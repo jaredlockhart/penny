@@ -397,6 +397,33 @@ class Penny:
                 break
         return total
 
+    async def _backfill_description_embeddings(self, batch_limit: int) -> int:
+        """Backfill memory description anchors missing an embedding.
+
+        The stage-1 routing gate compares the conversation against each
+        ``relevant`` memory's ``description_embedding``.  Descriptions seeded
+        by migrations have no vector (migrations can't embed), so vectorize
+        them at startup — scoped by the store to active, routable memories.
+        Returns count embedded.
+        """
+        assert self.embedding_model_client is not None
+        total = 0
+        while True:
+            memories = self.db.memories.get_memories_without_description_embedding(
+                limit=batch_limit
+            )
+            if not memories:
+                break
+            try:
+                vecs = await self.embedding_model_client.embed([m.description for m in memories])
+                for memory, vec in zip(memories, vecs, strict=True):
+                    self.db.memories.set_description_embedding(memory.name, vec)
+                total += len(memories)
+            except LlmError as e:
+                logger.warning("Startup embedding backfill failed for descriptions: %s", e)
+                break
+        return total
+
     async def run(self) -> None:
         """Run the agent."""
         logger.info("Starting Penny AI agent...")
@@ -419,6 +446,11 @@ class Penny:
             total_entries = await self._backfill_memory_embeddings(batch_limit)
             if total_entries:
                 logger.info("Startup embedding backfill complete: %d memory entries", total_entries)
+            total_descriptions = await self._backfill_description_embeddings(batch_limit)
+            if total_descriptions:
+                logger.info(
+                    "Startup embedding backfill complete: %d descriptions", total_descriptions
+                )
 
         await self._send_startup_announcement()
         await self._prompt_for_missing_profiles()

@@ -89,6 +89,7 @@ from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.constants import ChannelType, PennyConstants
 from penny.database.memory_store import (
     EntryInput,
+    Inclusion,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
     MemoryTypeError,
@@ -311,11 +312,11 @@ class BrowserChannel(MessageChannel):
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_CREATE:
-            self._handle_memory_create(data)
+            await self._handle_memory_create(data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_UPDATE:
-            self._handle_memory_update(data)
+            await self._handle_memory_update(data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_ARCHIVE:
@@ -527,7 +528,27 @@ class BrowserChannel(MessageChannel):
     # codebase (chat-side ``/like`` writes too land as ``"user"``).
     _ADDON_ENTRY_AUTHOR = "user"
 
-    def _handle_memory_create(self, data: dict) -> None:
+    @staticmethod
+    def _parse_routing(
+        inclusion: str | None, recall: str | None
+    ) -> tuple[Inclusion | None, RecallMode | None] | None:
+        """Resolve a browser-supplied (inclusion, recall) pair, or None if invalid.
+
+        Translates the legacy single-flag ``recall='off'`` to the new
+        ``inclusion=never`` + ``recall=recent`` split.  Unset values stay
+        ``None`` so the update path applies only what changed; the create path
+        fills its own defaults for any ``None``.
+        """
+        if recall == "off":
+            return Inclusion.NEVER, RecallMode.RECENT
+        try:
+            parsed_inclusion = Inclusion(inclusion) if inclusion is not None else None
+            parsed_recall = RecallMode(recall) if recall is not None else None
+        except ValueError:
+            return None
+        return parsed_inclusion, parsed_recall
+
+    async def _handle_memory_create(self, data: dict) -> None:
         """Create a new collection from the addon.  Logs are seeded by
         migrations and not user-creatable here."""
         try:
@@ -535,23 +556,28 @@ class BrowserChannel(MessageChannel):
         except ValidationError:
             logger.warning("Invalid memory_create: %s", str(data)[:200])
             return
-        try:
-            recall = RecallMode(req.recall)
-        except ValueError:
-            logger.warning("Invalid recall mode in memory_create: %s", req.recall)
+        routing = self._parse_routing(req.inclusion, req.recall)
+        if routing is None:
+            logger.warning(
+                "Invalid inclusion/recall in memory_create: %s/%s", req.inclusion, req.recall
+            )
             return
+        inclusion, recall = routing
+        description_embedding = await self._message_agent.embed_description(req.description)
         try:
             self._db.memories.create_collection(
                 req.name,
                 req.description,
-                recall,
+                inclusion or Inclusion.RELEVANT,
+                recall or RecallMode.RELEVANT,
                 extraction_prompt=req.extraction_prompt,
                 collector_interval_seconds=req.collector_interval_seconds,
+                description_embedding=description_embedding,
             )
         except MemoryAlreadyExistsError:
             logger.warning("memory_create with duplicate name: %s", req.name)
 
-    def _handle_memory_update(self, data: dict) -> None:
+    async def _handle_memory_update(self, data: dict) -> None:
         """Edit metadata on an existing collection.  Only fields that are
         not ``None`` are applied, matching ``update_collection_metadata``."""
         try:
@@ -559,20 +585,28 @@ class BrowserChannel(MessageChannel):
         except ValidationError:
             logger.warning("Invalid memory_update: %s", str(data)[:200])
             return
-        recall: RecallMode | None = None
-        if req.recall is not None:
-            try:
-                recall = RecallMode(req.recall)
-            except ValueError:
-                logger.warning("Invalid recall mode in memory_update: %s", req.recall)
-                return
+        routing = self._parse_routing(req.inclusion, req.recall)
+        if routing is None:
+            logger.warning(
+                "Invalid inclusion/recall in memory_update: %s/%s", req.inclusion, req.recall
+            )
+            return
+        inclusion, recall = routing
+        # Re-embed the routing anchor whenever the description changes.
+        description_embedding = (
+            await self._message_agent.embed_description(req.description)
+            if req.description is not None
+            else None
+        )
         try:
             self._db.memories.update_collection_metadata(
                 req.name,
                 description=req.description,
+                inclusion=inclusion,
                 recall=recall,
                 extraction_prompt=req.extraction_prompt,
                 collector_interval_seconds=req.collector_interval_seconds,
+                description_embedding=description_embedding,
             )
         except (MemoryNotFoundError, MemoryTypeError) as exc:
             logger.warning("memory_update failed for %s: %s", req.name, exc)

@@ -16,7 +16,7 @@ from penny.agents.collector import Collector
 from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import RecallMode
+from penny.database.memory_store import Inclusion, RecallMode
 from penny.database.models import Memory
 from penny.llm.client import LlmClient
 
@@ -50,7 +50,7 @@ def test_collector_name_is_singular(test_config, tmp_path):
 
 def test_dispatcher_returns_none_when_no_collections_have_prompts(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
-    db.memories.create_collection("plain", "no collector wired", RecallMode.OFF)
+    db.memories.create_collection("plain", "no collector wired", Inclusion.NEVER, RecallMode.RECENT)
     assert collector._next_ready_collection() is None
 
 
@@ -62,7 +62,8 @@ def test_dispatcher_picks_collection_with_extraction_prompt(test_config, tmp_pat
     db.memories.create_collection(
         "wired",
         "has a collector",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt=_VALID_EXTRACTION_PROMPT,
     )
     target = collector._next_ready_collection()
@@ -75,7 +76,8 @@ def test_dispatcher_skips_archived(test_config, tmp_path):
     db.memories.create_collection(
         "wired",
         "has a collector",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt=_VALID_EXTRACTION_PROMPT,
     )
     db.memories.archive("wired")
@@ -91,7 +93,11 @@ def test_dispatcher_skips_collection_with_too_short_extraction_prompt(test_confi
     collector, db = _make_collector(test_config, tmp_path)
     # "test_extraction_prompt" is 22 chars — below the 25-char minimum.
     db.memories.create_collection(
-        "test-col", "x", RecallMode.OFF, extraction_prompt="test_extraction_prompt"
+        "test-col",
+        "x",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="test_extraction_prompt",
     )
     assert collector._next_ready_collection() is None
 
@@ -103,7 +109,8 @@ def test_dispatcher_skips_collections_within_interval(test_config, tmp_path):
     db.memories.create_collection(
         "wired",
         "has a collector",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt=_VALID_EXTRACTION_PROMPT,
         collector_interval_seconds=300,
     )
@@ -117,14 +124,16 @@ def test_dispatcher_picks_most_overdue(test_config, tmp_path):
     db.memories.create_collection(
         "fresh",
         "x",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt=_VALID_EXTRACTION_PROMPT,
         collector_interval_seconds=60,
     )
     db.memories.create_collection(
         "stale",
         "x",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt=_VALID_EXTRACTION_PROMPT,
         collector_interval_seconds=60,
     )
@@ -150,7 +159,7 @@ def test_dispatcher_uses_default_interval_when_unset(test_config, tmp_path):
     PennyConstants default."""
     collector, db = _make_collector(test_config, tmp_path)
     db.memories.create_collection(
-        "wired", "x", RecallMode.OFF, extraction_prompt=_VALID_EXTRACTION_PROMPT
+        "wired", "x", Inclusion.NEVER, RecallMode.RECENT, extraction_prompt=_VALID_EXTRACTION_PROMPT
     )
     # Just collected → not ready until DEFAULT_INTERVAL elapses
     db.memories.mark_collected("wired")
@@ -189,16 +198,16 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
     structured done) — chat doesn't relay them, the collector base attaches
     them on every cycle."""
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
-        description="Prague attractions, restaurants, and bars worth visiting",
+        description="Strategy board games worth buying",
         recall=RecallMode.RELEVANT.value,
         archived=False,
         extraction_prompt=(
-            "Collect Prague spots from chat and browse logs.\n"
+            "Collect board games from chat and browse logs.\n"
             '1. log_read_next("user-messages")\n'
-            "2. browse for new spots\n"
-            '3. collection_write("prague-trip", entries=[...])\n'
+            "2. browse for new games\n"
+            '3. collection_write("board-games", entries=[...])\n'
             "4. done()."
         ),
     )
@@ -206,13 +215,13 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
     composed = Collector._compose_prompt(target)
 
     expected = (
-        "You are the collector for the `prague-trip` collection.\n"
-        "Description: Prague attractions, restaurants, and bars worth visiting\n"
+        "You are the collector for the `board-games` collection.\n"
+        "Description: Strategy board games worth buying\n"
         "\n"
-        "Collect Prague spots from chat and browse logs.\n"
+        "Collect board games from chat and browse logs.\n"
         '1. log_read_next("user-messages")\n'
-        "2. browse for new spots\n"
-        '3. collection_write("prague-trip", entries=[...])\n'
+        "2. browse for new games\n"
+        '3. collection_write("board-games", entries=[...])\n'
         "4. done().\n"
         "\n"
         "## Runtime rules (always apply)\n"
@@ -245,17 +254,17 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
 def _seed_collector_runs_log(db: Database) -> None:
     """Migration 0034 creates the log in production; tests using create_tables
     directly need to declare it themselves."""
-    db.memories.create_log("collector-runs", "audit log", RecallMode.OFF)
+    db.memories.create_log("collector-runs", "audit log", Inclusion.NEVER, RecallMode.RECENT)
 
 
 def test_log_run_writes_done_summary_on_success(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
     _seed_collector_runs_log(db)
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -265,26 +274,26 @@ def test_log_run_writes_done_summary_on_success(test_config, tmp_path):
             ToolCallRecord(tool="collection_write", arguments={}),
             ToolCallRecord(
                 tool="done",
-                arguments={"success": True, "summary": "wrote 2 new spots"},
+                arguments={"success": True, "summary": "wrote 2 new games"},
             ),
         ],
     )
     collector._log_run(target, response)
     entries = db.memories.read_latest("collector-runs")
     assert len(entries) == 1
-    assert "[prague-trip]" in entries[0].content
+    assert "[board-games]" in entries[0].content
     assert "✅" in entries[0].content
-    assert "wrote 2 new spots" in entries[0].content
+    assert "wrote 2 new games" in entries[0].content
 
 
 def test_log_run_marks_failure_when_done_says_so(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
     _seed_collector_runs_log(db)
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -309,10 +318,10 @@ def test_log_run_handles_no_done_call(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
     _seed_collector_runs_log(db)
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -338,10 +347,10 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
     passed in directly — no instance state."""
     collector, db = _make_collector(test_config, tmp_path)
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -357,7 +366,7 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
         tool_calls=[
             ToolCallRecord(
                 tool="done",
-                arguments={"success": True, "summary": "wrote 2 new spots"},
+                arguments={"success": True, "summary": "wrote 2 new games"},
             ),
         ],
     )
@@ -366,8 +375,8 @@ def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
 
     runs = db.messages.get_prompt_log_runs()
     assert runs[0]["run_success"] is True
-    assert runs[0]["run_reason"] == "wrote 2 new spots"
-    assert runs[0]["run_target"] == "prague-trip"
+    assert runs[0]["run_reason"] == "wrote 2 new games"
+    assert runs[0]["run_target"] == "board-games"
 
 
 def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
@@ -376,10 +385,10 @@ def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
     crashing or smearing onto an unrelated row."""
     collector, db = _make_collector(test_config, tmp_path)
     target = Memory(
-        name="prague-trip",
+        name="board-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -440,7 +449,9 @@ async def test_run_for_collection_not_found(test_config, tmp_path):
 @pytest.mark.asyncio
 async def test_run_for_archived_collection(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
-    db.memories.create_collection("archived-col", "x", RecallMode.OFF, extraction_prompt="x" * 30)
+    db.memories.create_collection(
+        "archived-col", "x", Inclusion.NEVER, RecallMode.RECENT, extraction_prompt="x" * 30
+    )
     db.memories.archive("archived-col")
     success, message = await collector.run_for("archived-col")
     assert success is False
@@ -450,7 +461,7 @@ async def test_run_for_archived_collection(test_config, tmp_path):
 @pytest.mark.asyncio
 async def test_run_for_no_extraction_prompt(test_config, tmp_path):
     collector, db = _make_collector(test_config, tmp_path)
-    db.memories.create_collection("bare-col", "x", RecallMode.OFF)
+    db.memories.create_collection("bare-col", "x", Inclusion.NEVER, RecallMode.RECENT)
     success, message = await collector.run_for("bare-col")
     assert success is False
     assert "extraction_prompt" in message
@@ -463,7 +474,11 @@ async def test_run_for_rejects_too_short_extraction_prompt(test_config, tmp_path
     running the cycle, preventing the same hallucination path as the dispatcher."""
     collector, db = _make_collector(test_config, tmp_path)
     db.memories.create_collection(
-        "short-col", "x", RecallMode.OFF, extraction_prompt="test_extraction_prompt"
+        "short-col",
+        "x",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="test_extraction_prompt",
     )
     success, message = await collector.run_for("short-col")
     assert success is False
@@ -479,7 +494,8 @@ async def test_run_for_runs_cycle_and_returns_done_summary(test_config, tmp_path
     db.memories.create_collection(
         "test-col",
         "test",
-        RecallMode.OFF,
+        Inclusion.NEVER,
+        RecallMode.RECENT,
         extraction_prompt="Extract things from user-messages.",
     )
 
@@ -511,7 +527,7 @@ def test_format_tool_trace_numbers_calls_and_truncates_args():
         answer="",
         tool_calls=[
             ToolCallRecord(tool="log_read_next", arguments={"memory": "user-messages"}),
-            ToolCallRecord(tool="browse", arguments={"queries": ["prague spa " * 10]}),
+            ToolCallRecord(tool="browse", arguments={"queries": ["board game " * 10]}),
             ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2 entries"}),
         ],
     )
@@ -541,15 +557,15 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
         name="notified-thoughts",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
     target_b = Memory(
-        name="prague-highlights",
+        name="card-games",
         type="collection",
         description="x",
-        recall=RecallMode.OFF.value,
+        recall=RecallMode.RECENT.value,
         archived=False,
         extraction_prompt="x",
     )
@@ -576,5 +592,5 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
     runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
     assert runs["run-A"]["run_target"] == "notified-thoughts"
     assert runs["run-A"]["run_reason"] == "ok-A"
-    assert runs["run-B"]["run_target"] == "prague-highlights"
+    assert runs["run-B"]["run_target"] == "card-games"
     assert runs["run-B"]["run_reason"] == "ok-B"

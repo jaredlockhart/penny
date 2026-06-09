@@ -200,17 +200,33 @@ class Memory(SQLModel, table=True):
     """A named memory — either a keyed collection or an append-only log.
 
     Memories are Penny's unified data primitive: user- or system-authored
-    containers that agents read from and write to via tools. Each memory
-    has a name, a shape (collection vs log), and a recall mode that controls
-    whether it appears in the chat agent's ambient context.
+    containers that agents read from and write to via tools.  Two orthogonal
+    flags control how a memory feeds the chat agent's ambient recall, in two
+    stages: ``inclusion`` decides whether the memory participates at all
+    (collection routing), and ``recall`` decides which of its entries surface
+    once included (entry rendering).
     """
 
     __tablename__ = "memory"
 
     name: str = Field(primary_key=True)
     type: str  # MemoryType enum value: "collection" or "log"
-    description: str  # Human-authored summary shown to the model in the memory registry
-    recall: str  # RecallMode enum value: "off" | "recent" | "relevant" | "all"
+    description: str  # Content-reflective summary; doubles as the stage-1 anchor
+    # Stage 1 (collection routing): Inclusion enum — "always" | "relevant" |
+    # "never".  "relevant" is gated by cosine between the conversation and
+    # ``description_embedding``.  ``server_default`` so raw-SQL inserts
+    # (migrations, test fixtures) that predate the column still satisfy NOT NULL.
+    inclusion: str = Field(
+        default="relevant",
+        index=True,
+        sa_column_kwargs={"server_default": "relevant"},
+    )
+    # Stage 2 (entry rendering): RecallMode enum — "all" | "relevant" |
+    # "recent".  Decides which entries of an included memory surface.
+    recall: str
+    # Embedding of ``description`` — the stage-1 relevance anchor, computed
+    # once on create/description-edit (NULL until backfilled at startup).
+    description_embedding: bytes | None = None
     archived: bool = Field(default=False, index=True)
     extraction_prompt: str | None = Field(default=None)
     collector_interval_seconds: int | None = Field(default=None)

@@ -98,9 +98,10 @@ class TestCreateAndList:
     @pytest.mark.asyncio
     async def test_create_collection_persists(self, tmp_path):
         db = _make_db(tmp_path)
-        result = await CollectionCreateTool(db).execute(
+        result = await CollectionCreateTool(db, None).execute(
             name="likes",
             description="positive prefs",
+            inclusion="relevant",
             recall="relevant",
             extraction_prompt=(
                 "Extract user likes from user-messages log and write to likes collection."
@@ -122,8 +123,8 @@ class TestCreateAndList:
     @pytest.mark.asyncio
     async def test_create_log_persists(self, tmp_path):
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(
-            name="user-messages", description="inbound", recall="recent"
+        await LogCreateTool(db, None).execute(
+            name="user-messages", description="inbound", inclusion="always", recall="recent"
         )
         memories = {m.name: m for m in db.memories.list_all()}
         assert memories["user-messages"].type == "log"
@@ -132,16 +133,18 @@ class TestCreateAndList:
     @pytest.mark.asyncio
     async def test_create_collection_duplicate_returns_user_friendly_message(self, tmp_path):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="ai-news",
             description="first",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        result = await CollectionCreateTool(db).execute(
+        result = await CollectionCreateTool(db, None).execute(
             name="ai-news",
             description="second slightly different",
+            inclusion="relevant",
             recall="relevant",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
@@ -156,18 +159,23 @@ class TestCreateAndList:
     @pytest.mark.asyncio
     async def test_create_log_duplicate_returns_user_friendly_message(self, tmp_path):
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="first", recall="recent")
-        result = await LogCreateTool(db).execute(name="events", description="second", recall="off")
+        await LogCreateTool(db, None).execute(
+            name="events", description="first", inclusion="always", recall="recent"
+        )
+        result = await LogCreateTool(db, None).execute(
+            name="events", description="second", inclusion="never", recall="recent"
+        )
         assert "already exists" in result
         assert "events" in result
 
     @pytest.mark.asyncio
     async def test_create_rejects_short_extraction_prompt(self, tmp_path):
         db = _make_db(tmp_path)
-        result = await CollectionCreateTool(db).execute(
+        result = await CollectionCreateTool(db, None).execute(
             name="notes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="yes",
             collector_interval_seconds=3600,
         )
@@ -181,10 +189,11 @@ class TestCreateAndList:
         # (nothing fills it), so the tool surface refuses to create one.
         db = _make_db(tmp_path)
         with pytest.raises(ValidationError):
-            await CollectionCreateTool(db).execute(
+            await CollectionCreateTool(db, None).execute(
                 name="notes",
                 description="x",
-                recall="off",
+                inclusion="never",
+                recall="recent",
                 collector_interval_seconds=3600,
             )
         assert db.memories.get("notes") is None
@@ -195,10 +204,11 @@ class TestCreateAndList:
         # has no cadence and never runs.
         db = _make_db(tmp_path)
         with pytest.raises(ValidationError):
-            await CollectionCreateTool(db).execute(
+            await CollectionCreateTool(db, None).execute(
                 name="notes",
                 description="x",
-                recall="off",
+                inclusion="never",
+                recall="recent",
                 extraction_prompt="Extract things from somewhere.",
             )
         assert db.memories.get("notes") is None
@@ -207,10 +217,11 @@ class TestCreateAndList:
     async def test_create_accepts_long_enough_extraction_prompt(self, tmp_path):
         db = _make_db(tmp_path)
         prompt = "Extract likes from user-messages log and write to collection."
-        result = await CollectionCreateTool(db).execute(
+        result = await CollectionCreateTool(db, None).execute(
             name="notes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt=prompt,
             collector_interval_seconds=3600,
         )
@@ -220,14 +231,15 @@ class TestCreateAndList:
     async def test_update_rejects_short_extraction_prompt(self, tmp_path):
         db = _make_db(tmp_path)
         original_prompt = "test fixture extraction prompt"
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="notes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt=original_prompt,
             collector_interval_seconds=3600,
         )
-        result = await CollectionUpdateTool(db).execute(name="notes", extraction_prompt="yes")
+        result = await CollectionUpdateTool(db, None).execute(name="notes", extraction_prompt="yes")
         assert "too short" in result
         # Update rejected — original prompt preserved unchanged
         assert db.memories.get("notes").extraction_prompt == original_prompt
@@ -237,9 +249,10 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_write_read_roundtrip(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
+            inclusion="relevant",
             recall="relevant",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
@@ -260,10 +273,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_write_reports_duplicate_via_tcr(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -286,10 +300,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_get_returns_entry_or_not_found(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -303,10 +318,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_keys_lists_unique_keys_in_order(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -319,10 +335,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_read_random_returns_all_when_few(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -334,10 +351,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_read_similar_uses_embedding(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -354,10 +372,11 @@ class TestCollectionWritesAndReads:
     @pytest.mark.asyncio
     async def test_read_similar_without_llm_client_returns_sentinel(self, tmp_path):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -369,10 +388,11 @@ class TestCollectionMutations:
     @pytest.mark.asyncio
     async def test_update_replaces_content(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -389,10 +409,11 @@ class TestCollectionMutations:
     @pytest.mark.asyncio
     async def test_update_missing_reports_not_found(self, tmp_path):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -404,17 +425,19 @@ class TestCollectionMutations:
     @pytest.mark.asyncio
     async def test_move_between_collections(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="unnotified",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="notified",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -429,17 +452,19 @@ class TestCollectionMutations:
     @pytest.mark.asyncio
     async def test_move_collision(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="a",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="b",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -454,10 +479,11 @@ class TestCollectionMutations:
     @pytest.mark.asyncio
     async def test_archive_and_unarchive(self, tmp_path):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -469,7 +495,9 @@ class TestLogTools:
     @pytest.mark.asyncio
     async def test_append_and_read_latest(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
@@ -479,7 +507,9 @@ class TestLogTools:
     @pytest.mark.asyncio
     async def test_read_recent_window(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="events", content="hello"
         )
@@ -490,7 +520,9 @@ class TestLogTools:
     async def test_read_recent_default_window(self, tmp_path, mock_llm):
         """log_read_recent is callable with only ``memory`` — window_seconds defaults to 3600."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="events", content="hello"
         )
@@ -500,7 +532,9 @@ class TestLogTools:
     @pytest.mark.asyncio
     async def test_log_similar_with_client(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="relevant")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="relevant", recall="relevant"
+        )
         client = _make_llm_client(mock_llm)
         await LogAppendTool(db, client, author="test").execute(
             memory="events", content="coffee is great"
@@ -517,7 +551,9 @@ class TestLogTools:
     async def test_read_next_returns_all_entries_when_no_cursor(self, tmp_path, mock_llm):
         """Without a stored cursor, read_next returns every entry in the log."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
@@ -532,7 +568,9 @@ class TestLogTools:
     async def test_commit_pending_advances_cursor_to_max_seen(self, tmp_path, mock_llm):
         """commit_pending writes the highest timestamp seen during the run."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
@@ -550,7 +588,9 @@ class TestLogTools:
     async def test_discard_pending_leaves_cursor_unchanged(self, tmp_path, mock_llm):
         """discard_pending drops the in-memory state without touching the DB cursor."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
 
@@ -575,7 +615,9 @@ class TestLogTools:
         from penny.constants import PennyConstants
 
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         # Append more entries than the bound to confirm trimming
         n_entries = PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT + 5
@@ -601,7 +643,9 @@ class TestLogTools:
         incrementally — even entries that the first cycle's bound excluded
         stay excluded (since they're older than the cursor)."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         for i in range(15):
             await append.execute(memory="events", content=f"old-{i:02d}")
@@ -623,7 +667,9 @@ class TestLogTools:
     async def test_per_agent_cursors_are_independent(self, tmp_path, mock_llm):
         """Two agents reading the same log have independent cursor state."""
         db = _make_db(tmp_path)
-        await LogCreateTool(db).execute(name="events", description="x", recall="recent")
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
         await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="events", content="hello"
         )
@@ -642,10 +688,11 @@ class TestExistsAndDone:
     @pytest.mark.asyncio
     async def test_exists_yes_via_exact_key(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -661,10 +708,11 @@ class TestExistsAndDone:
     @pytest.mark.asyncio
     async def test_exists_no(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -680,10 +728,11 @@ class TestExistsAndDone:
         comparison in tool args.  Memory-name fields normalise on the way
         in so the rest of the stack sees the canonical form."""
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
-            name="prague-highlights",
+        await CollectionCreateTool(db, None).execute(
+            name="board-games",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -691,48 +740,47 @@ class TestExistsAndDone:
         # Non-breaking hyphen U+2011 in the memory name — model output
         # observed in the wild.
         result = await write.execute(
-            memory="prague‑highlights",
+            memory="board‑games",
             entries=[{"key": "k", "content": "v"}],
         )
-        assert "Wrote 1 entry to 'prague-highlights'" in result
+        assert "Wrote 1 entry to 'board-games'" in result
 
     @pytest.mark.asyncio
     async def test_exists_content_only_uses_content_as_key_probe(self, tmp_path, mock_llm):
-        """Regression: ``exists(content="Kepler Museum")`` must catch an
-        existing entry with ``key="Kepler Museum"``, even when the
+        """Regression: ``exists(content="Catan")`` must catch an
+        existing entry with ``key="Catan"``, even when the
         existing row's *content* is a long description that doesn't
         cosine-match the short candidate.  The tool now copies content
         into the key slot when the model omits it, letting key-TCR fire
         in the dedup rule."""
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
-            name="prague-highlights",
+        await CollectionCreateTool(db, None).execute(
+            name="board-games",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
         client = _make_llm_client(mock_llm)
         # Existing entry: short key, long descriptive content.
         await CollectionWriteTool(db, client, author="test").execute(
-            memory="prague-highlights",
+            memory="board-games",
             entries=[
                 {
-                    "key": "Kepler Museum",
+                    "key": "Catan",
                     "content": (
-                        "Kepler Museum – A science-museum dedicated to astronomy, "
-                        "named after Johannes Kepler, founded 2009 in the International "
-                        "Year of Astronomy with support from the Magistrate of the "
-                        "Capital City of Prague."
+                        "Catan – A gateway strategy board game of trading and "
+                        "settlement, designed by Klaus Teuber, first published "
+                        "1995, widely credited with popularising modern hobby "
+                        "board gaming."
                     ),
                 }
             ],
         )
         # Probe with content only — what the collector usually does when
         # checking a candidate name before writing.
-        result = await ExistsTool(db, client).execute(
-            memories=["prague-highlights"], content="Kepler Museum"
-        )
+        result = await ExistsTool(db, client).execute(memories=["board-games"], content="Catan")
         assert result == "yes"
 
     @pytest.mark.asyncio
@@ -758,10 +806,11 @@ class TestAuthorAttribution:
     async def test_writes_stamp_constructor_author(self, tmp_path, mock_llm):
         """Author is bound at tool construction (not pulled from ambient state)."""
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -777,17 +826,19 @@ class TestCollectionMerge:
     @pytest.mark.asyncio
     async def test_merge_moves_entries_and_archives_source(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="src",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dst",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -806,17 +857,19 @@ class TestCollectionMerge:
     @pytest.mark.asyncio
     async def test_merge_drops_colliding_keys(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="src",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dst",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -838,17 +891,19 @@ class TestCollectionMerge:
     @pytest.mark.asyncio
     async def test_merge_empty_source_archives_it(self, tmp_path):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="src",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dst",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -877,8 +932,8 @@ class TestTestExtractionPromptTool:
     async def test_success_returns_checkmark_and_summary(self):
         collector = self._MockCollector((True, "Collector cycle complete. wrote 3 entries"))
         tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
-        result = await tool.execute(memory="prague-highlights")
-        assert collector.called_with == "prague-highlights"
+        result = await tool.execute(memory="board-games")
+        assert collector.called_with == "board-games"
         assert result.startswith("✅")
         assert "wrote 3 entries" in result
 
@@ -903,8 +958,8 @@ class TestTestExtractionPromptTool:
         """MemoryNameArgs normalises Unicode dashes before passing to run_for."""
         collector = self._MockCollector((True, "Collector cycle complete. wrote 1 entry"))
         tool = TestExtractionPromptTool(collector)  # ty: ignore[invalid-argument-type]
-        await tool.execute(memory="prague‑highlights")  # U+2011 non-breaking hyphen
-        assert collector.called_with == "prague-highlights"
+        await tool.execute(memory="board‑games")  # U+2011 non-breaking hyphen
+        assert collector.called_with == "board-games"
 
 
 class TestFactory:
@@ -972,17 +1027,19 @@ class TestScopedFactory:
         """A scoped collector that tries to write to a different collection
         gets a clean refusal rather than silently corrupting unrelated data."""
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dislikes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -999,10 +1056,11 @@ class TestScopedFactory:
     @pytest.mark.asyncio
     async def test_scoped_write_allows_target_collection(self, tmp_path, mock_llm):
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="likes",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -1028,17 +1086,19 @@ class TestScopedFactory:
         the move is in-bounds even though from_memory is a different memory.
         """
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="src",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dst",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
@@ -1055,17 +1115,19 @@ class TestScopedFactory:
     async def test_scoped_move_defaults_to_memory_from_scope(self, tmp_path, mock_llm):
         """Omitting to_memory on a scoped tool defaults to the bound scope."""
         db = _make_db(tmp_path)
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="src",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
-        await CollectionCreateTool(db).execute(
+        await CollectionCreateTool(db, None).execute(
             name="dst",
             description="x",
-            recall="off",
+            inclusion="never",
+            recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
         )
