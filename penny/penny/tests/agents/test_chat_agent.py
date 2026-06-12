@@ -46,8 +46,10 @@ async def test_basic_message_flow(
     # Configure Ollama to return fetch tool call, then final response.
     # Use a URL query so the browse side-effect produces a page entry in
     # the browse-results log (search-only queries don't, by design).
+    # The final response echoes the media URL the browse result surfaced —
+    # the channel resolves it into an attachment and strips it from the text.
     mock_llm.set_default_flow(
-        final_response="here's what i found about your question! 🌟",
+        final_response="here's what i found about your question! https://media.penny.local/1 🌟",
         search_query="https://weather.example.com/today",
     )
 
@@ -277,6 +279,20 @@ source URL so the user can follow up."""
         # Mock browse provider is wired in conftest; the tool was invoked once.
         assert len(browse_entries) >= 1
         assert all(e.author == "chat" for e in browse_entries)
+
+        # Media pipeline: the mock browse image (a data URI) was decoded into
+        # a media row referenced by https://media.penny.local/1, the reference
+        # was written into the browse-results entry, the model echoed it in
+        # its reply, and at channel egress it was stripped from the text and
+        # resolved back into a base64_attachments data URI.
+        media_row = penny.db.media.get(1)
+        assert media_row is not None
+        assert media_row.mime_type == "image/png"
+        assert media_row.source_url == "https://weather.example.com/today"
+        assert any("Image: https://media.penny.local/1" in e.content for e in browse_entries)
+        assert "media.penny.local" not in response["message"]
+        assert response["base64_attachments"] == ["data:image/png;base64,mock"]
+        assert all("media.penny.local" not in e.content for e in penny_msg_entries)
 
         # No conversation echo thoughts should be logged
         # (old _log_conversation_thought is removed; thoughts come from tool reasoning only)

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from penny.commands.base import Command
 from penny.commands.models import CommandContext, CommandResult
 from penny.constants import PennyConstants
+from penny.media_urls import resolve_media_urls
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -71,9 +72,14 @@ class TestCommand(Command):
                 sender=context.user,
             )
 
-            # Prepend [TEST] to response
+            # Prepend [TEST] to response.  Test mode bypasses send_response,
+            # so media URLs are resolved here against the test database.
             answer = response.answer.strip() if response.answer else PennyResponse.TEST_NO_RESPONSE
-            return CommandResult(text=f"{PennyResponse.TEST_MODE_PREFIX}{answer}")
+            resolved = resolve_media_urls(test_db.media, answer)
+            return CommandResult(
+                text=f"{PennyResponse.TEST_MODE_PREFIX}{resolved.content}",
+                attachments=resolved.attachments or None,
+            )
 
         except Exception as e:
             logger.exception("Error executing test command: %s", e)

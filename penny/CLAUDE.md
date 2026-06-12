@@ -117,7 +117,7 @@ penny/
     user_store.py     — UserStore: get_info, save_info, mute/unmute
     memory_store.py   — MemoryStore: unified collections + logs with three-signal dedup
     cursor_store.py   — CursorStore: per-agent read cursors into log-shaped memories
-    media_store.py    — MediaStore: binary blobs referenced by <media:ID> tokens
+    media_store.py    — MediaStore: binary blobs referenced by media URLs
     models.py         — SQLModel tables (see Data Model section)
     migrate.py        — Migration runner: file discovery, tracking table, validation
     migrations/       — Numbered migration files (0001–0025)
@@ -136,6 +136,7 @@ penny/
     client.py         — ZohoClient: Zoho Mail API client (httpx + OAuth refresh)
     models.py         — Zoho Mail API Pydantic models
   html_utils.py       — Shared HTML text extraction helpers
+  media_urls.py       — media reference URL helpers: format/extract/strip, data-URI codec, egress resolution
   tests/
     conftest.py       — Pytest fixtures for mocks and test config
     test_embeddings.py, test_similarity.py, test_periodic_schedule.py, test_scheduler.py
@@ -332,7 +333,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 - **Memory**: Unified container for the task/memory framework — `name` (PK), `type` (`collection` or `log`), `description` (content-reflective; doubles as the stage-1 routing anchor), `description_embedding` (the anchor vector, backfilled at startup), `inclusion` (stage-1 routing: `always` / `relevant` / `never`), `recall` (stage-2 entry rendering: `all` / `relevant` / `recent`), `archived`. Collections are keyed sets with dedup on write; logs are append-only keyless streams
 - **MemoryEntry**: One entry in a memory — `memory_name` FK, `key` (nullable for logs), `content`, `author`, `key_embedding`, `content_embedding`. Entries are immutable once written — `update` replaces content for a given key
 - **AgentCursor**: Per-agent read progress through a log-shaped memory — `(agent_name, memory_name)` PK, `last_read_at` high-water mark. Advanced two-phase by the orchestrator (pending during a run, committed on success)
-- **Media**: Binary blobs (images, etc.) referenced by `<media:ID>` tokens in memory entry content — `mime_type`, `data`, `source_url`
+- **Media**: Binary blobs (images, etc.) referenced by `https://media.penny.local/<id>` URLs in memory entry content — `mime_type`, `data`, `source_url`
 
 ## Message Flow
 
@@ -359,6 +360,7 @@ All tables defined in `database/models.py` as SQLModel classes:
 
 - **Browser-based search**: All web access (search, page reading) goes through the browser extension via BrowseTool. Text queries are converted to search URLs (configurable via `SEARCH_URL`). No third-party search APIs
 - **URL fallback**: If the model's final response doesn't contain any URL, the agent appends the first source URL
+- **Images as inline media URLs**: The browse tool decodes each page image (a base64 data URI from the extension) into a `media` table row and writes an `Image: https://media.penny.local/<id>` line into the result text — there is no image side-channel. Because the reference is a URL, the existing URL machinery applies unchanged: the prompts already promote source-URL preservation, hallucinated URLs trigger a retry, and malformed ones are cleaned. The reference persists through memory entries (browse-results, thoughts, collections), so a collector surfacing an old entry inherits its image. `MessageChannel.send_response` is the single egress choke point: it recognises the reserved host, strips the URL from the outgoing text (logs and quote-matching see clean text), loads the blob, and attaches it as a data URI; unknown ids are dropped with a warning. Image delivery depends on the model carrying the URL into its output, like source URLs. Discord ignores attachments (not yet implemented); `/draw` still passes attachments directly via `send_message`
 - **Duplicate tool blocking**: Agent tracks called tools per message to prevent LLM tool-call loops
 - **Tool parameter validation**: Tool parameters validated before execution; non-existent tools return clear error messages
 - **Two agent shapes**: ChatAgent (turn-driven, user-facing, lifecycle tools only) and Collector (single dispatcher across all collections, scoped entry-mutation tools).  Plus ScheduleExecutor for user-defined cron tasks

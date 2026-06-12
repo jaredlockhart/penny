@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from penny.constants import PennyConstants, ProgressEmoji
 from penny.database.memory_store import LogEntryInput
 from penny.llm.similarity import embed_text
+from penny.media_urls import format_media_url, parse_data_uri
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
@@ -157,21 +158,27 @@ class BrowseTool(Tool):
         args = BrowseArgs(**kwargs)
 
         cap = self._max_calls
-        tasks: list[tuple[str, str, Any]] = []
+        tasks: list[tuple[str, str, str, Any]] = []
         for q in args.queries[:cap]:
             if _URL_PATTERN.match(q):
-                tasks.append((PennyConstants.BROWSE_PAGE_HEADER, q, self._read_page(q)))
+                tasks.append((PennyConstants.BROWSE_PAGE_HEADER, q, q, self._read_page(q)))
             else:
                 search_url = self._search_url + urllib.parse.quote(q)
-                tasks.append((PennyConstants.BROWSE_SEARCH_HEADER, q, self._read_page(search_url)))
+                tasks.append(
+                    (
+                        PennyConstants.BROWSE_SEARCH_HEADER,
+                        q,
+                        search_url,
+                        self._read_page(search_url),
+                    )
+                )
 
-        results = await asyncio.gather(*[coro for _, _, coro in tasks], return_exceptions=True)
+        results = await asyncio.gather(*[coro for _, _, _, coro in tasks], return_exceptions=True)
 
         sections: list[str] = []
         page_sections: list[str] = []
         all_urls: list[str] = []
-        first_image: str | None = None
-        for (header, value, _), result in zip(tasks, results, strict=True):
+        for (header, value, url, _), result in zip(tasks, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning("Browse sub-call failed (%s%s): %s", header, value, result)
                 error_label = f"{PennyConstants.BROWSE_ERROR_HEADER}{value}"
@@ -182,19 +189,40 @@ class BrowseTool(Tool):
             if header == PennyConstants.BROWSE_SEARCH_HEADER:
                 text = _trim_search_result(text)
             all_urls.extend(result.urls)
-            section = f"{label}\n{text}"
+            section = self._build_section(label, text, result.image_base64, url)
             sections.append(section)
             if header == PennyConstants.BROWSE_PAGE_HEADER:
                 page_sections.append(section)
-            if not first_image and result.image_base64:
-                first_image = result.image_base64
 
         await self._append_pages_to_browse_results(page_sections)
         return SearchResult(
             text=PennyConstants.SECTION_SEPARATOR.join(sections),
             urls=all_urls,
-            image_base64=first_image,
         )
+
+    def _build_section(self, label: str, text: str, image: str | None, source_url: str) -> str:
+        """Assemble one result section, storing the page image as a media URL.
+
+        The ``Image:`` line sits between the label and the body so the model
+        sees it alongside the page's Title/URL header — and so the section
+        written to the ``browse-results`` log carries the image reference
+        into every downstream collector for free.
+        """
+        media_url = self._store_image(image, source_url) if image else None
+        if media_url is None:
+            return f"{label}\n{text}"
+        return f"{label}\nImage: {media_url}\n{text}"
+
+    def _store_image(self, image: str, source_url: str) -> str | None:
+        """Persist a data-URI page image as a media row, returning its URL."""
+        if self._db is None:
+            return None
+        parsed = parse_data_uri(image)
+        if parsed is None:
+            logger.warning("Page image is not a base64 data URI, skipping (%s)", source_url)
+            return None
+        media_id = self._db.media.put(parsed.data, parsed.mime_type, source_url=source_url)
+        return format_media_url(media_id)
 
     async def _append_pages_to_browse_results(self, page_sections: list[str]) -> None:
         """Side-effect-write each successful page as its own log entry.

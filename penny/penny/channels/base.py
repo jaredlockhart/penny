@@ -18,6 +18,7 @@ from penny.database.models import MessageLog
 from penny.llm import LlmClient
 from penny.llm.image_client import OllamaImageClient
 from penny.llm.similarity import embed_text
+from penny.media_urls import resolve_media_urls
 from penny.responses import PennyResponse
 
 if TYPE_CHECKING:
@@ -296,22 +297,25 @@ class MessageChannel(ABC):
         content: str,
         parent_id: int | None,
         author: str,
-        attachments: list[str] | None = None,
         quote_message: MessageLog | None = None,
         thought_id: int | None = None,
     ) -> int | None:
         """
-        Log and send an outgoing message with optional image attachments.
+        Log and send an outgoing message, resolving media URLs to attachments.
 
         Args:
             recipient: Identifier for the recipient
-            content: Message content
+            content: Message content — any media reference URLs
+                (https://media.penny.local/<id>) are stripped from the text
+                and resolved against the media table into data-URI
+                attachments at this single choke point, so every producer
+                (chat reply, send_message tool, scheduler) gets image
+                delivery for free
             parent_id: Parent message ID for thread linking
             author: Name of the agent producing this message — stamped onto
                 the side-effect write to ``penny-messages``.  Always passed
                 explicitly by the caller (chat reply path, notify, scheduler)
                 so attribution is correct without ambient state.
-            attachments: Optional list of base64-encoded image attachments
             quote_message: Optional message to quote-reply to
             thought_id: Optional FK to the thought that triggered this message
 
@@ -319,9 +323,10 @@ class MessageChannel(ABC):
             Database message ID if send was successful, None otherwise
         """
 
-        # Apply channel-specific formatting
-        # We log the prepared content so quote matching works correctly
-        prepared = self.prepare_outgoing(content)
+        # Resolve media URLs before channel formatting, then log the
+        # prepared (token-free) content so quote matching works correctly
+        resolved = resolve_media_urls(self._db.media, content)
+        prepared = self.prepare_outgoing(resolved.content)
         device = self._db.devices.get_by_identifier(recipient)
         device_id = device.id if device else None
         message_id = self._db.messages.log_message(
@@ -334,7 +339,9 @@ class MessageChannel(ABC):
             device_id=device_id,
         )
         await self._append_to_memory_log(PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author)
-        external_id = await self.send_message(recipient, prepared, attachments, quote_message)
+        external_id = await self.send_message(
+            recipient, prepared, resolved.attachments or None, quote_message
+        )
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
             self._db.messages.set_external_id(message_id, str(external_id))
@@ -593,7 +600,6 @@ class MessageChannel(ABC):
             answer,
             parent_id=incoming_id,
             author=author,
-            attachments=response.attachments or None,
             quote_message=incoming_log,
         )
         if sent is None:
