@@ -8,6 +8,8 @@ Queries are dispatched in parallel.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import re
 import urllib.parse
@@ -16,11 +18,12 @@ from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants, ProgressEmoji
 from penny.database.memory_store import LogEntryInput
+from penny.llm.embeddings import serialize_embedding
 from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
 from penny.tools.base import Tool
 from penny.tools.content_cleaning import clean_browser_content
-from penny.tools.models import BrowseArgs, SearchResult
+from penny.tools.models import BrowseArgs, BrowsePage, SearchResult
 
 if TYPE_CHECKING:
     from penny.channels.permission_manager import PermissionManager
@@ -169,8 +172,7 @@ class BrowseTool(Tool):
 
         sections: list[str] = []
         page_sections: list[str] = []
-        all_urls: list[str] = []
-        first_image: str | None = None
+        captures: list[BrowsePage] = []
         for (header, value, _), result in zip(tasks, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning("Browse sub-call failed (%s%s): %s", header, value, result)
@@ -181,20 +183,16 @@ class BrowseTool(Tool):
             text = result.text
             if header == PennyConstants.BROWSE_SEARCH_HEADER:
                 text = _trim_search_result(text)
-            all_urls.extend(result.urls)
             section = f"{label}\n{text}"
             sections.append(section)
             if header == PennyConstants.BROWSE_PAGE_HEADER:
                 page_sections.append(section)
-            if not first_image and result.image_base64:
-                first_image = result.image_base64
+                if result.image:
+                    captures.append(result)
 
         await self._append_pages_to_browse_results(page_sections)
-        return SearchResult(
-            text=PennyConstants.SECTION_SEPARATOR.join(sections),
-            urls=all_urls,
-            image_base64=first_image,
-        )
+        await self._store_media(captures)
+        return SearchResult(text=PennyConstants.SECTION_SEPARATOR.join(sections))
 
     async def _append_pages_to_browse_results(self, page_sections: list[str]) -> None:
         """Side-effect-write each successful page as its own log entry.
@@ -216,7 +214,7 @@ class BrowseTool(Tool):
             author=self._author,
         )
 
-    async def _read_page(self, url: str) -> SearchResult:
+    async def _read_page(self, url: str) -> BrowsePage:
         """Read a single URL via the browser extension, retrying with backoff on disconnect.
 
         Raises ConnectionError if no browser is reachable after all retries, and
@@ -269,7 +267,61 @@ class BrowseTool(Tool):
                     continue
                 raise
 
+            title = self._parse_title(text)
             text = clean_browser_content(text)
-            return SearchResult(text=text, image_base64=image_url)
+            return BrowsePage(text=text, image=image_url, title=title, url=url)
 
         raise ConnectionError("no browser connected")
+
+    @staticmethod
+    def _parse_title(raw_text: str) -> str | None:
+        """Pull the page title from the extension's ``Title: ...`` prefix line."""
+        first_line = raw_text.split("\n", 1)[0]
+        prefix = PennyConstants.BROWSE_TITLE_PREFIX
+        if first_line.startswith(prefix):
+            return first_line[len(prefix) :].strip() or None
+        return None
+
+    async def _store_media(self, pages: list[BrowsePage]) -> None:
+        """Store each captured page image with its title+URL metadata embedding.
+
+        Best-effort: a page whose image isn't a decodable base64 data URI is
+        skipped rather than failing the browse.  The embedding lets channel
+        egress match an outgoing message back to the most relevant image.
+        """
+        if self._db is None:
+            return
+        for page in pages:
+            decoded = self._decode_data_uri(page.image)
+            if decoded is None:
+                continue
+            data, mime_type = decoded
+            metadata = self._media_metadata(page)
+            vec = await embed_text(self._embedding_client, metadata)
+            embedding = serialize_embedding(vec) if vec else None
+            self._db.media.put(
+                data=data,
+                mime_type=mime_type,
+                source_url=page.url,
+                title=page.title,
+                embedding=embedding,
+            )
+
+    @staticmethod
+    def _media_metadata(page: BrowsePage) -> str:
+        """Text embedded for egress matching — the page title plus its URL."""
+        return "\n".join(part for part in (page.title, page.url) if part)
+
+    @staticmethod
+    def _decode_data_uri(image: str | None) -> tuple[bytes, str] | None:
+        """Decode a ``data:<mime>;base64,<data>`` URI into (bytes, mime_type)."""
+        if not image or not image.startswith("data:") or ";base64," not in image:
+            logger.warning("Browse image is not a base64 data URI; skipping media store")
+            return None
+        header, encoded = image.split(";base64,", 1)
+        mime_type = header[len("data:") :]
+        try:
+            return base64.b64decode(encoded), mime_type
+        except binascii.Error:
+            logger.warning("Browse image base64 failed to decode; skipping media store")
+            return None

@@ -274,11 +274,12 @@ class AgentCursor(SQLModel, table=True):
 
 
 class Media(SQLModel, table=True):
-    """Binary media (images, etc.) stored out-of-line from memory entries.
+    """Binary media (images) captured while browsing, delivered side-channel.
 
-    Entries reference media via `<media:ID>` tokens in their content body; the
-    ambient recall assembler resolves tokens to inline image data at prompt
-    build time.
+    The browse tool stores each page's image here with its source URL, page
+    title, and an embedding of that metadata. At channel egress the outgoing
+    message text is embedded and matched against these vectors — the single
+    nearest image is attached, with no model involvement.
     """
 
     __tablename__ = "media"
@@ -287,4 +288,6 @@ class Media(SQLModel, table=True):
     mime_type: str
     data: bytes
     source_url: str | None = None
+    title: str | None = None
+    embedding: bytes | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

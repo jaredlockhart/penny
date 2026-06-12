@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -333,7 +334,11 @@ class MessageChannel(ABC):
             thought_id=thought_id,
             device_id=device_id,
         )
-        await self._append_to_memory_log(PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author)
+        embedding = await embed_text(self._embedding_model_client, prepared)
+        await self._append_to_memory_log(
+            PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author, embedding
+        )
+        attachments = self._resolve_media(attachments, embedding)
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
         # Store the external ID for future reactions and quote replies
         if external_id and message_id:
@@ -341,13 +346,37 @@ class MessageChannel(ABC):
         logger.info("Sent response to %s (%d chars)", recipient, len(content))
         return message_id if external_id is not None else None
 
-    async def _append_to_memory_log(self, name: str, content: str, author: str) -> None:
+    def _resolve_media(
+        self, attachments: list[str] | None, embedding: list[float] | None
+    ) -> list[str] | None:
+        """Attach the browsed image whose metadata is closest to this message.
+
+        Skipped when the caller already supplied an attachment (e.g. ``/draw``)
+        or no embedding is available. The single nearest embedded image always
+        wins — no floor — so replies carry an image whenever any has been browsed.
+        """
+        if attachments or embedding is None:
+            return attachments
+        media = self._db.media.find_nearest(embedding)
+        if media is None:
+            return attachments
+        encoded = base64.b64encode(media.data).decode()
+        return [f"data:{media.mime_type};base64,{encoded}"]
+
+    async def _append_to_memory_log(
+        self, name: str, content: str, author: str, embedding: list[float] | None = None
+    ) -> None:
         """Append ``content`` to a memory log, embedding at write time.
 
         The embedding is best-effort — if no embedding client is configured
-        or embed_text fails, the entry is still appended without a vector.
+        or embed_text fails, the entry is still appended without a vector.  A
+        precomputed ``embedding`` is reused when the caller already has one.
         """
-        vec = await embed_text(self._embedding_model_client, content)
+        vec = (
+            embedding
+            if embedding is not None
+            else await embed_text(self._embedding_model_client, content)
+        )
         self._db.memories.append(
             name,
             [LogEntryInput(content=content, content_embedding=vec)],
@@ -593,7 +622,6 @@ class MessageChannel(ABC):
             answer,
             parent_id=incoming_id,
             author=author,
-            attachments=response.attachments or None,
             quote_message=incoming_log,
         )
         if sent is None:

@@ -111,6 +111,5 @@ class ScheduleExecutor(Agent):
             answer,
             parent_id=None,
             author=self.name,
-            attachments=response.attachments or None,
             quote_message=None,
         )

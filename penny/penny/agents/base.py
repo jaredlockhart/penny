@@ -194,7 +194,6 @@ class _StepResult:
     messages: list[dict]
     records: list[ToolCallRecord]
     source_urls: list[str]
-    attachments: list[str]
 
 
 class Agent:
@@ -255,7 +254,6 @@ class Agent:
         self._channel: MessageChannel | None = None
         self._current_user: str | None = None
         self._tool_result_text: list[str] = []
-        self._tool_result_images: list[str] = []
 
         if system_prompt is not None:
             self.system_prompt = system_prompt
@@ -386,7 +384,6 @@ class Agent:
         if run_id is None:
             run_id = uuid.uuid4().hex
         self._tool_result_text = []
-        self._tool_result_images = []
         messages = self._build_messages(prompt, history, system_prompt)
         tools = self._tool_registry.get_ollama_tools()
         return await self._run_agentic_loop(
@@ -405,7 +402,6 @@ class Agent:
         prompt_type: str | None = None,
     ) -> ControllerResponse:
         """Execute the step loop: call model, process tool calls, or return final answer."""
-        attachments: list[str] = []
         source_urls: list[str] = []
         called_tools: set[tuple[str, ...]] = set()
         tool_call_records: list[ToolCallRecord] = []
@@ -423,15 +419,11 @@ class Agent:
 
             if response.has_tool_calls:
                 result = await self._process_tool_calls(response, called_tools, on_tool_start)
-                self._absorb_tool_step_result(
-                    result, messages, tool_call_records, source_urls, attachments
-                )
+                self._absorb_tool_step_result(result, messages, tool_call_records, source_urls)
                 await self.after_step(result.records, result.messages, messages)
                 if self.should_stop_loop(result.records):
                     logger.info("Loop stop requested after step %d/%d", step + 1, steps)
-                    return ControllerResponse(
-                        answer="", tool_calls=tool_call_records, attachments=attachments
-                    )
+                    return ControllerResponse(answer="", tool_calls=tool_call_records)
                 abort = self._abort_if_all_tools_failed(tool_call_records)
                 if abort is not None:
                     return abort
@@ -440,7 +432,7 @@ class Agent:
             if await self.handle_text_step(response, messages, step, is_final_step):
                 continue
 
-            return self._build_final_response(response, source_urls, attachments, tool_call_records)
+            return self._build_final_response(response, source_urls, tool_call_records)
 
         logger.warning("Max steps reached without final answer")
         return ControllerResponse(
@@ -460,14 +452,11 @@ class Agent:
         messages: list[dict],
         tool_call_records: list[ToolCallRecord],
         source_urls: list[str],
-        attachments: list[str],
     ) -> None:
         """Append a step's tool-call output into the running loop state."""
         messages.extend(result.messages)
         tool_call_records.extend(result.records)
         source_urls.extend(result.source_urls)
-        attachments.extend(result.attachments)
-        self._tool_result_images.extend(result.attachments)
 
     def _abort_if_all_tools_failed(
         self, tool_call_records: list[ToolCallRecord]
@@ -679,11 +668,9 @@ class Agent:
         self,
         response,
         source_urls: list[str],
-        attachments: list[str],
         tool_call_records: list[ToolCallRecord],
     ) -> ControllerResponse:
         """Build the ControllerResponse from the model's final (non-tool) answer."""
-        logger.debug("Building final response with %d attachments", len(attachments))
         content = response.content.strip()
 
         if not content:
@@ -731,7 +718,6 @@ class Agent:
         return ControllerResponse(
             answer=content,
             thinking=thinking,
-            attachments=attachments,
             tool_calls=tool_call_records,
         )
 
@@ -812,7 +798,6 @@ class Agent:
         messages: list[dict] = [response.message.to_input_message()]
         records: list[ToolCallRecord] = []
         source_urls: list[str] = []
-        attachments: list[str] = []
 
         pending = self._dedup_tool_calls(response, called_tools, messages)
         await self._notify_tool_start(on_tool_start, pending)
@@ -824,13 +809,12 @@ class Agent:
             ]
         )
 
-        self._collect_tool_results(pending, results, messages, records, source_urls, attachments)
+        self._collect_tool_results(pending, results, messages, records, source_urls)
 
         return _StepResult(
             messages=messages,
             records=records,
             source_urls=source_urls,
-            attachments=attachments,
         )
 
     def _dedup_tool_calls(
@@ -881,20 +865,17 @@ class Agent:
     def _collect_tool_results(
         self,
         pending: list[tuple[str, str, dict, str | None]],
-        results: list[tuple[str, ToolCallRecord, list[str], str | None]],
+        results: list[tuple[str, ToolCallRecord, list[str]]],
         messages: list[dict],
         records: list[ToolCallRecord],
         source_urls: list[str],
-        attachments: list[str],
     ) -> None:
-        """Append each tool result to messages and accumulate records/urls/images."""
-        for (tool_call_id, _, _, _), (result_str, record, urls, image) in zip(
+        """Append each tool result to messages and accumulate records/urls."""
+        for (tool_call_id, _, _, _), (result_str, record, urls) in zip(
             pending, results, strict=True
         ):
             records.append(record)
             source_urls.extend(urls)
-            if image:
-                attachments.append(image)
             messages.append(
                 {"role": MessageRole.TOOL, "content": result_str, "tool_call_id": tool_call_id}
             )
@@ -904,8 +885,8 @@ class Agent:
         tool_name: str,
         arguments: dict,
         reasoning: str | None,
-    ) -> tuple[str, ToolCallRecord, list[str], str | None]:
-        """Execute one tool call. Returns (result_str, record, source_urls, image)."""
+    ) -> tuple[str, ToolCallRecord, list[str]]:
+        """Execute one tool call. Returns (result_str, record, source_urls)."""
         logger.info("Executing tool: %s", tool_name)
         if reasoning:
             logger.debug("Tool reasoning: %s", reasoning[:200])
@@ -918,17 +899,17 @@ class Agent:
             result_str = f"Error: {tool_result.error}"
             record.failed = True
             logger.debug("Tool result (failed): %s", result_str[:200])
-            return result_str, record, [], None
+            return result_str, record, []
 
         if isinstance(tool_result.result, SearchResult):
-            result_str, urls, image = self._format_search_result(tool_result.result)
+            result_str, urls = self._format_search_result(tool_result.result)
             record.failed = _is_tool_result_failed(result_str)
             logger.debug("Tool result: %s", result_str[:200])
-            return result_str, record, urls, image
+            return result_str, record, urls
         result_str = str(tool_result.result)
         record.failed = _is_tool_result_failed(result_str)
         logger.debug("Tool result: %s", result_str[:200])
-        return result_str, record, [], None
+        return result_str, record, []
 
     @staticmethod
     def _make_call_key(tool_name: str, arguments: dict) -> tuple[str, ...]:
@@ -937,14 +918,14 @@ class Agent:
         return (tool_name, *arg_parts)
 
     @staticmethod
-    def _format_search_result(result: SearchResult) -> tuple[str, list[str], str | None]:
-        """Format a SearchResult. Returns (text, urls, image_base64)."""
+    def _format_search_result(result: SearchResult) -> tuple[str, list[str]]:
+        """Format a SearchResult. Returns (text, urls)."""
         text = result.text
         urls = result.urls or []
         if urls:
             sources = "\n".join(urls)
             text += f"\n\nSources:\n{sources}"
-        return text, urls, result.image_base64
+        return text, urls
 
     # ── URL validation ──────────────────────────────────────────────────
 

@@ -1,8 +1,9 @@
 """Tests for BrowserChannel message extraction and device registration."""
 
 import asyncio
+import base64
 import json
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,8 +16,9 @@ from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
 from penny.database.memory_store import EntryInput, Inclusion, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
-from penny.database.models import PromptLog, RuntimeConfig
+from penny.database.models import Media, PromptLog, RuntimeConfig
 from penny.tests.conftest import wait_until
+from penny.tests.mocks.llm_patches import MockLlmClient
 from penny.tools.browse import BrowseTool
 from penny.tools.models import SearchResult
 from penny.tools.read_emails import ReadEmailsTool
@@ -29,6 +31,16 @@ def _make_db(tmp_path) -> Database:
     db.create_tables()
     migrate(db_path)
     return db
+
+
+def _data_uri(raw: bytes, mime: str = "image/jpeg") -> str:
+    """Wrap raw bytes as the base64 data URI the extension returns for images."""
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+
+
+def _all_media(db: Database) -> list[Media]:
+    with Session(db.engine) as session:
+        return list(session.exec(select(Media)).all())
 
 
 class TestBrowserChannelExtract:
@@ -210,16 +222,32 @@ class TestBrowseTool:
         request_fn.assert_called_once_with("browse_url", {"url": "https://example.com"})
 
     @pytest.mark.asyncio
-    async def test_image_url_from_response(self):
-        """Tool passes through image URL from the tool response tuple."""
+    async def test_stores_browsed_image_as_media(self, tmp_path):
+        """A page image is stored in the media table with title, URL, and embedding.
+
+        The image no longer rides along on the SearchResult — it's captured
+        side-channel for the egress matcher.
+        """
+        db = _make_db(tmp_path)
+        raw = b"\xff\xd8\xff jpeg payload"
         request_fn = AsyncMock(
-            return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", "https://ex.com/og.jpg")
+            return_value=("Title: Tasty Recipe\nURL: https://ex.com/r\n\nContent.", _data_uri(raw))
         )
-        tool = self._make_tool(request_fn)
-        result = await tool.execute(queries=["https://example.com"])
+        tool = BrowseTool(
+            max_calls=3, db=db, embedding_client=cast(Any, MockLlmClient()), author="penny"
+        )
+        tool.set_browse_provider(lambda: (request_fn, MagicMock(check_domain=AsyncMock())))
+        result = await tool.execute(queries=["https://ex.com/r"])
 
         assert isinstance(result, SearchResult)
-        assert result.image_base64 == "https://ex.com/og.jpg"
+        assert not hasattr(result, "image_base64")
+        rows = _all_media(db)
+        assert len(rows) == 1
+        assert rows[0].data == raw
+        assert rows[0].mime_type == "image/jpeg"
+        assert rows[0].source_url == "https://ex.com/r"
+        assert rows[0].title == "Tasty Recipe"
+        assert rows[0].embedding is not None
 
     @pytest.mark.asyncio
     async def test_cleans_kagi_cruft_from_content(self):
@@ -271,14 +299,18 @@ class TestBrowseTool:
         assert "[www.example.com]" not in result.text
 
     @pytest.mark.asyncio
-    async def test_no_image_returns_none(self):
-        """SearchResult.image_base64 is None when response has no image."""
+    async def test_no_image_stores_no_media(self, tmp_path):
+        """A page with no image stores nothing in the media table."""
+        db = _make_db(tmp_path)
         request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        tool = self._make_tool(request_fn)
+        tool = BrowseTool(
+            max_calls=3, db=db, embedding_client=cast(Any, MockLlmClient()), author="penny"
+        )
+        tool.set_browse_provider(lambda: (request_fn, MagicMock(check_domain=AsyncMock())))
         result = await tool.execute(queries=["https://example.com"])
 
         assert isinstance(result, SearchResult)
-        assert result.image_base64 is None
+        assert _all_media(db) == []
 
     @pytest.mark.asyncio
     async def test_browser_runtime_error_becomes_error_section(self, monkeypatch):
@@ -343,37 +375,32 @@ class TestBrowseTool:
         assert PennyConstants.BROWSE_ERROR_HEADER + "https://example.com" in result.text
 
 
-class TestBrowseToolImagePassthrough:
-    """BrowseTool passes the first browse image through to the combined result."""
+class TestBrowseToolMediaCapture:
+    """BrowseTool stores every page's image side-channel, not just the first."""
 
     @pytest.mark.asyncio
-    async def test_image_from_browse_propagates(self):
-        """Image from a browse sub-call appears on the combined SearchResult."""
-        request_fn = AsyncMock(
-            return_value=(
-                "Title: Ex\nURL: https://ex.com\nImage: https://ex.com/img.jpg\n\nContent.",
-                "https://ex.com/img.jpg",
-            )
+    async def test_each_page_image_stored(self, tmp_path):
+        """Reading two pages in one call stores two distinct media rows."""
+        db = _make_db(tmp_path)
+        pages = {
+            "https://a.com": ("Title: A\nURL: https://a.com\n\nAlpha.", _data_uri(b"aaa")),
+            "https://b.com": ("Title: B\nURL: https://b.com\n\nBeta.", _data_uri(b"bbb")),
+        }
+
+        async def request_fn(method: str, params: dict):
+            return pages[params["url"]]
+
+        tool = BrowseTool(
+            max_calls=3, db=db, embedding_client=cast(Any, MockLlmClient()), author="penny"
         )
-        mock_perm = MagicMock(check_domain=AsyncMock())
-        tool = BrowseTool(max_calls=3)
-        tool.set_browse_provider(lambda: (request_fn, mock_perm))
+        tool.set_browse_provider(lambda: (request_fn, MagicMock(check_domain=AsyncMock())))
 
-        result = await tool.execute(queries=["https://ex.com"])
+        result = await tool.execute(queries=["https://a.com", "https://b.com"])
         assert isinstance(result, SearchResult)
-        assert result.image_base64 == "https://ex.com/img.jpg"
-
-    @pytest.mark.asyncio
-    async def test_no_image_when_browse_has_none(self):
-        """Combined SearchResult has no image when browse returns none."""
-        request_fn = AsyncMock(return_value=("Title: Ex\nURL: https://ex.com\n\nContent.", None))
-        mock_perm = MagicMock(check_domain=AsyncMock())
-        tool = BrowseTool(max_calls=3)
-        tool.set_browse_provider(lambda: (request_fn, mock_perm))
-
-        result = await tool.execute(queries=["https://ex.com"])
-        assert isinstance(result, SearchResult)
-        assert result.image_base64 is None
+        rows = sorted(_all_media(db), key=lambda r: r.source_url or "")
+        assert [r.source_url for r in rows] == ["https://a.com", "https://b.com"]
+        assert [r.data for r in rows] == [b"aaa", b"bbb"]
+        assert [r.title for r in rows] == ["A", "B"]
 
 
 class _MockWs:

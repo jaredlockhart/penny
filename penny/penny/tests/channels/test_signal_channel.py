@@ -687,3 +687,62 @@ def test_reaction_without_callback_returns_normal_message():
     assert msg is not None
     assert msg.is_reaction is True
     assert msg.content == "\U0001f44e"
+
+
+@pytest.mark.asyncio
+async def test_send_response_attaches_matching_media(signal_server, test_config, mock_llm):
+    """The browsed image whose metadata is closest to the outgoing text is
+    attached at egress (the single nearest image always wins)."""
+    import base64
+    from typing import Any, cast
+
+    from penny.agents import ChatAgent
+    from penny.database.migrate import migrate
+    from penny.llm.embeddings import serialize_embedding
+    from penny.prompts import Prompt
+    from penny.tests.mocks.llm_patches import MockLlmClient
+
+    db = Database(test_config.db_path)
+    db.create_tables()
+    migrate(test_config.db_path)
+
+    client = LlmClient(
+        api_url=test_config.llm_api_url,
+        model=test_config.llm_model,
+        db=db,
+        max_retries=test_config.llm_max_retries,
+        retry_delay=test_config.llm_retry_delay,
+    )
+    message_agent = ChatAgent(
+        system_prompt=Prompt.CONVERSATION_PROMPT,
+        model_client=client,
+        tools=[],
+        db=db,
+        config=test_config,
+    )
+    channel = SignalChannel(
+        api_url=test_config.signal_api_url,
+        phone_number=test_config.signal_number or "+15551234567",
+        message_agent=message_agent,
+        db=db,
+    )
+    # Default mock embed returns a fixed non-zero vector, so the outgoing text
+    # and the media metadata embed identically — a guaranteed match.
+    channel._embedding_model_client = cast(Any, MockLlmClient())
+
+    raw = b"\xff\xd8 jpeg bytes"
+    db.media.put(
+        raw,
+        "image/jpeg",
+        source_url="https://ex.com",
+        title="Ex",
+        embedding=serialize_embedding([1.0, 0.0, 0.0, 0.0]),
+    )
+
+    await channel.send_response(TEST_SENDER, "tell me about ex", parent_id=None, author="penny")
+
+    sent = signal_server.outgoing_messages[-1]
+    expected = f"data:image/jpeg;base64,{base64.b64encode(raw).decode()}"
+    assert sent.get("base64_attachments") == [expected]
+
+    await channel.close()

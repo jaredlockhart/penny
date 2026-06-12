@@ -6,15 +6,27 @@ from pydantic import BaseModel, Field
 
 
 class SearchResult(BaseModel):
-    """Result from a search tool containing text and optional image."""
+    """Result from a search tool — text the model reads plus source URLs.
+
+    Images are no longer carried here: the browse tool stores them in the media
+    table at capture time and they are matched back in side-channel at egress.
+    """
 
     text: str
-    image_base64: str | None = None
     urls: list[str] = Field(default_factory=list)
 
-    def __str__(self) -> str:
-        image_summary = f"<image {len(self.image_base64)} chars>" if self.image_base64 else "None"
-        return f"SearchResult(text={self.text}, urls={self.urls}, image_base64={image_summary})"
+
+class BrowsePage(BaseModel):
+    """A single page read by the browse tool, before sections are assembled.
+
+    Carries the page image (a base64 ``data:`` URI), source URL, and title out
+    to the tool's media-capture step; none of these reach the model.
+    """
+
+    text: str
+    image: str | None = None
+    title: str | None = None
+    url: str | None = None
 
 
 class BrowseArgs(BaseModel):

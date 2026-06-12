@@ -22,6 +22,7 @@ from penny.database.memory_store import (
     MemoryTypeError,
     RecallMode,
 )
+from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.tools.memory_tools import CollectionMetadataTool
 
 
@@ -771,17 +772,55 @@ class TestCursorStore:
 class TestMediaStore:
     def test_put_and_get_roundtrip(self, tmp_path):
         db = _make_db(tmp_path)
-        media_id = db.media.put(b"binary payload", "image/png", source_url="https://x.test/a.png")
+        media_id = db.media.put(
+            b"binary payload",
+            "image/png",
+            source_url="https://x.test/a.png",
+            title="A Page",
+            embedding=serialize_embedding([1.0, 0.0, 0.0]),
+        )
         entry = db.media.get(media_id)
 
         assert entry is not None
         assert entry.data == b"binary payload"
         assert entry.mime_type == "image/png"
         assert entry.source_url == "https://x.test/a.png"
+        assert entry.title == "A Page"
+        assert entry.embedding is not None
+        assert deserialize_embedding(entry.embedding) == [1.0, 0.0, 0.0]
 
     def test_get_missing_returns_none(self, tmp_path):
         db = _make_db(tmp_path)
         assert db.media.get(99999) is None
+
+    def test_find_nearest_returns_closest(self, tmp_path):
+        db = _make_db(tmp_path)
+        db.media.put(
+            b"a", "image/png", source_url="https://a", embedding=serialize_embedding([1.0, 0.0])
+        )
+        db.media.put(
+            b"b", "image/png", source_url="https://b", embedding=serialize_embedding([0.0, 1.0])
+        )
+
+        match = db.media.find_nearest([0.9, 0.1])
+        assert match is not None
+        assert match.source_url == "https://a"
+
+    def test_find_nearest_no_floor_returns_even_weak_match(self, tmp_path):
+        """The single nearest image always wins — a reply is never left
+        imageless even when the cosine is poor."""
+        db = _make_db(tmp_path)
+        db.media.put(
+            b"a", "image/png", source_url="https://a", embedding=serialize_embedding([1.0, 0.0])
+        )
+        match = db.media.find_nearest([0.0, 1.0])
+        assert match is not None
+        assert match.source_url == "https://a"
+
+    def test_find_nearest_returns_none_when_no_embedded_media(self, tmp_path):
+        db = _make_db(tmp_path)
+        db.media.put(b"a", "image/png", source_url="https://a")  # no embedding
+        assert db.media.find_nearest([1.0, 0.0]) is None
 
 
 class TestWriteTypeEnforcement:
