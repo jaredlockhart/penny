@@ -18,6 +18,7 @@ import argparse
 
 from scripts.prompt_validation import (
     collection_lifecycle,
+    media_urls,
     novel_patterns,
     retrieval,
     skills_extractor,
@@ -28,6 +29,7 @@ SUITES = {
     collection_lifecycle.NAME: collection_lifecycle,
     skills_extractor.NAME: skills_extractor,
     novel_patterns.NAME: novel_patterns,
+    media_urls.NAME: media_urls,
     retrieval.NAME: retrieval,
 }
 

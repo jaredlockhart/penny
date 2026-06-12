@@ -240,6 +240,13 @@ When you reference something from a search, use ONLY these source URLs. \
 Copy them exactly — character for character. If a topic has no matching \
 source URL, mention it without a URL.
 
+Pages may start with an 'Image:' line holding a URL like \
+https://media.penny.local/123 — that is the page's picture. When your \
+reply draws on a page that has one, ALWAYS include that Image: URL on \
+its own line at the end of your reply, copied exactly like a source \
+URL. It is delivered to the user as an attached photo, so a reply \
+from a page with an Image: line is incomplete without it.
+
 When the user changes topics, just go with it.
 
 Always include specific details (specs, dates, prices) and at least one \

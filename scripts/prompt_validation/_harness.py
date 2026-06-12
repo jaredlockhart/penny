@@ -284,6 +284,7 @@ def converse(
     tools: list[dict],
     tool_result: Callable[[str, dict], Any],
     max_steps: int = 6,
+    force_text_final: bool = False,
 ) -> Conversation:
     """Run the agentic loop, serving synthetic results for read-style tool
     calls and stopping at the first terminal call.
@@ -291,6 +292,12 @@ def converse(
     ``tool_result(name, args)`` returns a string (a synthetic tool result —
     the loop continues) or the ``TERMINAL`` sentinel (capture the call and
     stop).  A plain text reply with no tool calls also stops the loop.
+
+    ``force_text_final`` mirrors the production chat agent's final step
+    (``_tools_for_step`` strips tools so the model must produce text): if
+    the step budget runs out mid-tool-spiral, one last call is made with
+    no tools, retrying once with the production FINAL_STEP_NUDGE if the
+    content comes back empty.
     """
     messages = [
         {"role": "system", "content": system},
@@ -310,13 +317,16 @@ def converse(
             final_text = text
             break
 
-        # Is any call terminal?
-        terminal = next((c for c in calls if tool_result(c["name"], c["args"]) is TERMINAL), None)
+        # Serve each call exactly ONCE — stateful tool_result functions
+        # (dedup sets, served-page flags) break if invoked twice per call,
+        # and the model would see the second invocation's value.
+        served = [(c, tool_result(c["name"], c["args"])) for c in calls]
+        terminal = next((c for c, result in served if result is TERMINAL), None)
         if terminal is not None:
             terminal_call = {"name": terminal["name"], "args": terminal["args"]}
             break
 
-        # All read-style: serve synthetic results and continue.
+        # All read-style: append the served results and continue.
         messages.append({
             "role": "assistant",
             "content": msg.content,
@@ -326,12 +336,22 @@ def converse(
                 for c in calls
             ],
         })
-        for c in calls:
+        for c, result in served:
             messages.append({
                 "role": "tool",
                 "tool_call_id": c["id"],
-                "content": str(tool_result(c["name"], c["args"])),
+                "content": str(result),
             })
+
+    if force_text_final and terminal_call is None and not final_text:
+        msg = h.chat(messages, tools=None)
+        final_text = msg.content or ""
+        if not final_text.strip():
+            nudge = class_attr(PENNY_PKG / "prompts.py", "Prompt", "FINAL_STEP_NUDGE")
+            messages.append({"role": "user", "content": nudge.format(original_question=user_msg)})
+            msg = h.chat(messages, tools=None)
+            final_text = msg.content or ""
+        turns.append({"calls": [], "text": final_text})
 
     return Conversation(turns, terminal_call, final_text)
 
