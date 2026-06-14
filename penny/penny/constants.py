@@ -100,10 +100,9 @@ class PennyConstants:
     BROWSE_RETRY_DELAY = 1.0
     BROWSE_REQUEST_TIMEOUT = 30.0
 
-    # Default look-back window (seconds) for log_read_recent when the caller
-    # omits ``window_seconds``.  1 hour is the most common "what just happened"
-    # range.
-    LOG_READ_RECENT_DEFAULT_WINDOW_SECONDS = 3600
+    # ``log_read`` window-mode look-back (seconds) for chat/schedule reads — the
+    # "what just happened" range.  1 hour.
+    LOG_READ_WINDOW_SECONDS = 3600
 
     # Connect timeout for the OpenAI-compatible LLM HTTP client.  Tunes only the
     # TCP-handshake / TLS deadline — the per-request read/write deadline is the
@@ -192,13 +191,13 @@ class PennyConstants:
     MEMORY_USER_MESSAGES_LOG = "user-messages"
     MEMORY_COLLECTOR_RUNS_LOG = "collector-runs"
 
-    # ``log_read_next`` first-cycle bound: when an agent has no cursor yet on a
-    # log, fall back to the most recent N entries instead of every entry since
-    # the beginning of time.  Keeps brand-new collectors from dumping the
-    # entire user-messages history (months of chat) into the first cycle's
-    # context.  Subsequent cycles use the established cursor and pick up
-    # incrementally.
-    LOG_READ_NEXT_INITIAL_LIMIT = 10
+    # ``log_read`` cursor-mode batch bound — entries returned per call for a
+    # collector.  Applies to every call: the first read (no cursor → most-recent
+    # N, not the whole history) and later reads (the next N since the cursor).
+    # The cursor advances by what was returned, so a backlog is worked through in
+    # bounded batches across cycles instead of flooding one agentic loop with
+    # hundreds of entries it can't reason over.
+    LOG_READ_LIMIT = 10
     MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
     MEMORY_BROWSE_RESULTS_LOG = "browse-results"
 

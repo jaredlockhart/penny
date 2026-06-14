@@ -51,9 +51,8 @@ from penny.tools.memory_args import (
     LogCreateArgs,
     MemoryNameArgs,
     ReadLatestArgs,
-    ReadNextArgs,
+    ReadLogArgs,
     ReadRandomArgs,
-    ReadRecentArgs,
     ReadSimilarArgs,
     UpdateEntryArgs,
 )
@@ -1033,99 +1032,80 @@ class CollectionDeleteEntryTool(Tool):
 # ── Log reads ───────────────────────────────────────────────────────────────
 
 
-class LogReadRecentTool(Tool):
-    """Return log entries created within the past ``window_seconds`` seconds."""
-
-    name = "log_read_recent"
-    description = (
-        "Return entries created within the past ``window_seconds`` seconds, "
-        "oldest first. Use for 'what just happened' queries."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "memory": {"type": "string"},
-            "window_seconds": {
-                "type": "integer",
-                "description": (
-                    "Look-back window in seconds; defaults to "
-                    f"{PennyConstants.LOG_READ_RECENT_DEFAULT_WINDOW_SECONDS} (1 hour) if omitted"
-                ),
-            },
-            "cap": {"type": "integer", "description": "Max entries; omit for all"},
-        },
-        "required": ["memory"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = ReadRecentArgs(**kwargs)
-        entries = self._db.memories.read_recent(args.memory, args.window_seconds, args.cap)
-        return _format_entries(entries, source=args.memory, ordering="oldest first")
+_LOG_READ_CURSOR_DESCRIPTION = (
+    "Return the next batch of entries appended to this log since you last read "
+    "it.  A cursor tracks where you left off — review everything it returns; the "
+    "next cycle hands you the next batch.  You never specify a count."
+)
+_LOG_READ_WINDOW_DESCRIPTION = (
+    "Return recent entries from this log (a short look-back window), oldest "
+    "first.  Use for 'what just happened' questions."
+)
 
 
-class LogReadNextTool(Tool):
-    """Read entries appended since the agent's last committed cursor.
+class LogReadTool(Tool):
+    """Read entries from a log — one tool, caller-dispatched behaviour.
 
-    Cursor advance is *pending* until the orchestration layer calls
-    ``commit_pending`` after a successful run.  A failed run discards the
-    pending cursor, so the next run sees the same entries again.
+    For a collector (``scope`` set) it's CURSOR-based: it returns the next
+    bounded batch since the agent's last committed cursor, so a review job works
+    through everything in batches and can't miss entries.  Cursor advance is
+    *pending* until ``commit_pending`` after a successful run (a failed run
+    discards it).  For chat/schedule (``scope`` is None) it's WINDOW-based: the
+    most recent look-back window, stateless — an ad-hoc "what just happened"
+    read.  The caller never chooses the mode or a size; Python does, from who's
+    asking — so the model can't pick the wrong one.
     """
 
-    name = "log_read_next"
-    description = (
-        "Return entries appended to a log since this agent's last committed read. "
-        "Use this to process new content incrementally without re-seeing entries "
-        "from earlier runs."
-    )
+    name = "log_read"
     parameters = {
         "type": "object",
-        "properties": {
-            "memory": {"type": "string"},
-            "cap": {"type": "integer", "description": "Max entries; omit for all"},
-        },
+        "properties": {"memory": {"type": "string"}},
         "required": ["memory"],
     }
 
-    def __init__(self, db: Database, agent_name: str) -> None:
+    def __init__(self, db: Database, agent_name: str, scope: str | None) -> None:
         self._db = db
         self._agent_name = agent_name
+        self._cursor_mode = scope is not None
+        self.description = (
+            _LOG_READ_CURSOR_DESCRIPTION if self._cursor_mode else _LOG_READ_WINDOW_DESCRIPTION
+        )
         self._pending: dict[str, datetime] = {}
 
     async def execute(self, **kwargs: Any) -> str:
-        args = ReadNextArgs(**kwargs)
-        cursor = self._db.cursors.get(self._agent_name, args.memory)
+        args = ReadLogArgs(**kwargs)
+        entries = (
+            self._read_cursor(args.memory) if self._cursor_mode else self._read_window(args.memory)
+        )
+        return _format_entries(entries, source=args.memory, ordering="oldest first")
+
+    def _read_cursor(self, memory: str) -> list[MemoryEntry]:
+        cursor = self._db.cursors.get(self._agent_name, memory)
+        limit = PennyConstants.LOG_READ_LIMIT
         if cursor is None:
-            # First cycle on this log — bound the fetch to the most-recent N
-            # entries instead of every entry since the beginning of time.
-            # Otherwise a brand-new collector would dump the full log history
-            # (months of user messages) into the first cycle's context.
-            # Newest-first from read_latest, reversed so cursor advance
-            # tracks the latest entry's timestamp.
-            entries = list(
-                reversed(
-                    self._db.memories.read_latest(
-                        args.memory, k=PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT
-                    )
-                )
-            )
+            # First read on this log — bound to the most-recent N entries instead
+            # of the entire history (newest-first, reversed so the cursor advance
+            # tracks the latest timestamp).
+            entries = list(reversed(self._db.memories.read_latest(memory, k=limit)))
         else:
-            entries = self._db.memories.read_since(args.memory, cursor, args.cap)
+            # The next N since the cursor — bounded so a backlog is worked through
+            # in batches across cycles, never dumped into one loop.
+            entries = self._db.memories.read_since(memory, cursor, limit)
         if entries:
             max_seen = max(e.created_at for e in entries)
-            prev = self._pending.get(args.memory)
+            prev = self._pending.get(memory)
             if prev is None or max_seen > prev:
-                self._pending[args.memory] = max_seen
-        return _format_entries(entries, source=args.memory, ordering="oldest first")
+                self._pending[memory] = max_seen
+        return entries
+
+    def _read_window(self, memory: str) -> list[MemoryEntry]:
+        return self._db.memories.read_recent(memory, PennyConstants.LOG_READ_WINDOW_SECONDS, None)
 
     def commit_pending(self) -> None:
         """Persist the highest timestamp seen during this run as the new cursor.
 
-        Called by the orchestration layer after a successful run.  Discards
-        any pending state on completion so a re-used tool instance starts
-        fresh.
+        Called by the orchestration layer after a successful run (cursor mode
+        only — a no-op for window-mode chat reads, which keep no cursor).
         """
         for memory_name, last_read_at in self._pending.items():
             self._db.cursors.advance_committed(self._agent_name, memory_name, last_read_at)
@@ -1343,8 +1323,7 @@ def build_memory_tools(
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
         CollectionMetadataTool(db),
-        LogReadRecentTool(db),
-        LogReadNextTool(db, agent_name),
+        LogReadTool(db, agent_name, scope),
         ExistsTool(db, llm_client),
     ]
     lifecycle: list[Tool] = [

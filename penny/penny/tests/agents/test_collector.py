@@ -20,7 +20,7 @@ from penny.database import Database
 from penny.database.memory_store import Inclusion, LogEntryInput, RecallMode
 from penny.database.models import Memory
 from penny.llm.client import LlmClient
-from penny.tools.memory_tools import LogReadNextTool
+from penny.tools.memory_tools import LogReadTool
 
 
 def _llm_client() -> LlmClient:
@@ -74,14 +74,14 @@ async def test_collector_cursors_partition_per_collection(test_config, tmp_path)
         author="user",
     )
 
-    def _log_read_next_for(collection: str) -> LogReadNextTool:
+    def _log_read_for(collection: str) -> LogReadTool:
         db.memories.create_collection(collection, "d", Inclusion.NEVER, RecallMode.RECENT)
         collector._current_target = db.memories.get(collection)
-        tool = next(t for t in collector.get_tools() if isinstance(t, LogReadNextTool))
+        tool = next(t for t in collector.get_tools() if isinstance(t, LogReadTool))
         collector._current_target = None
         return tool
 
-    alpha = _log_read_next_for("alpha")
+    alpha = _log_read_for("alpha")
     alpha_result = await alpha.execute(memory="user-messages")
     assert "hello there" in alpha_result
     # Framing: the read leads with a count + source header so the model reads
@@ -89,7 +89,7 @@ async def test_collector_cursors_partition_per_collection(test_config, tmp_path)
     assert "1 entry from `user-messages`" in alpha_result
     alpha.commit_pending()  # advance alpha's cursor past the entry
 
-    beta = _log_read_next_for("beta")
+    beta = _log_read_for("beta")
     assert "hello there" in await beta.execute(memory="user-messages"), (
         "beta starved by alpha's cursor — collections share one cursor"
     )
@@ -256,7 +256,7 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
         archived=False,
         extraction_prompt=(
             "Collect board games from chat and browse logs.\n"
-            '1. log_read_next("user-messages")\n'
+            '1. log_read("user-messages")\n'
             "2. browse for new games\n"
             '3. collection_write("board-games", entries=[...])\n'
             "4. done()."
@@ -270,7 +270,7 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
         "Description: Strategy board games worth buying\n"
         "\n"
         "Collect board games from chat and browse logs.\n"
-        '1. log_read_next("user-messages")\n'
+        '1. log_read("user-messages")\n'
         "2. browse for new games\n"
         '3. collection_write("board-games", entries=[...])\n'
         "4. done().\n"
@@ -532,14 +532,14 @@ def test_format_tool_trace_numbers_calls_and_truncates_args():
     response = ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(tool="log_read_next", arguments={"memory": "user-messages"}),
+            ToolCallRecord(tool="log_read", arguments={"memory": "user-messages"}),
             ToolCallRecord(tool="browse", arguments={"queries": ["board game " * 10]}),
             ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2 entries"}),
         ],
     )
     trace = Collector._format_tool_trace(response)
     lines = trace.splitlines()
-    assert lines[0] == "1. log_read_next(memory=user-messages)"
+    assert lines[0] == "1. log_read(memory=user-messages)"
     assert lines[1].startswith("2. browse(queries=")
     assert "..." in lines[1]  # long query was truncated
     assert (

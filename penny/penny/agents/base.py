@@ -24,7 +24,7 @@ from penny.prompts import Prompt
 from penny.responses import PennyResponse
 from penny.tools import Tool, ToolCall, ToolExecutor, ToolRegistry
 from penny.tools.browse import BrowseTool
-from penny.tools.memory_tools import DoneTool, LogReadNextTool, build_memory_tools
+from penny.tools.memory_tools import DoneTool, LogReadTool, build_memory_tools
 from penny.tools.models import SearchResult
 from penny.tools.send_message import SendMessageTool
 
@@ -313,9 +313,9 @@ class Agent:
         Penny user so notify can address them by name and the profile
         section reads correctly.  Reads ``self.name`` (class attr — also
         the prompt type identifier in promptlog) and ``self.terminator_tool``
-        (class attr) to drive the cycle.  If a ``LogReadNextTool`` is in
-        the surface, its pending cursor is committed on success and
-        discarded on failure.
+        (class attr) to drive the cycle.  If a ``LogReadTool`` is in the
+        surface in cursor mode, its pending cursor is committed on success
+        and discarded on failure.
 
         ``run_id`` is supplied by the caller — the same UUID stamps every
         promptlog row this cycle produces and is what subclass cleanup
@@ -324,7 +324,7 @@ class Agent:
         per-cycle state lives on ``self``.
         """
         tools = self.get_tools()
-        log_read_next = next((t for t in tools if isinstance(t, LogReadNextTool)), None)
+        log_read = next((t for t in tools if isinstance(t, LogReadTool)), None)
         self._install_tools(tools)
 
         primary_user = self.db.users.get_primary_sender()
@@ -354,11 +354,11 @@ class Agent:
                 response.tool_calls.append(ToolCallRecord(tool=DoneTool.name, arguments=args))
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
-        if log_read_next is not None:
+        if log_read is not None:
             if self._should_commit_cursor(success):
-                log_read_next.commit_pending()
+                log_read.commit_pending()
             else:
-                log_read_next.discard_pending()
+                log_read.discard_pending()
 
         return CycleResult(success=success, response=response)
 

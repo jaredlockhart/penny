@@ -13,13 +13,11 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
-from penny.constants import PennyConstants
-
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
 # observed writing ``"board‑games"`` for ``"board-games"``.
 # The visual is identical but the string compares unequal, so memory-keyed
-# tools (``collection_write``, ``log_read_next``, etc.) silently failed
+# tools (``collection_write``, ``log_read``, etc.) silently failed
 # with refusals or "memory not found" errors.  Normalise on the way in so
 # the rest of the stack sees a single canonical form.
 _UNICODE_DASHES = "‐‑‒–—―−"
@@ -148,19 +146,12 @@ class ReadSimilarArgs(BaseModel):
 # ── Log-specific reads ──────────────────────────────────────────────────────
 
 
-class ReadRecentArgs(BaseModel):
-    """Entries created within the past ``window_seconds`` seconds."""
+class ReadLogArgs(BaseModel):
+    """A single ``log_read`` over a log.  The caller names only the log — the
+    semantics (cursor batch for collectors, recent window for chat/schedule) and
+    all sizes are decided in Python from the caller, never by the model."""
 
     memory: MemoryName
-    window_seconds: int = PennyConstants.LOG_READ_RECENT_DEFAULT_WINDOW_SECONDS
-    cap: int | None = None
-
-
-class ReadNextArgs(BaseModel):
-    """Cursor-based read: entries newer than the agent's last committed cursor."""
-
-    memory: MemoryName
-    cap: int | None = None
 
 
 # ── Collection writes ───────────────────────────────────────────────────────

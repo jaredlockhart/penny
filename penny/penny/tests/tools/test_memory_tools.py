@@ -31,8 +31,7 @@ from penny.tools.memory_tools import (
     ExistsTool,
     LogAppendTool,
     LogCreateTool,
-    LogReadNextTool,
-    LogReadRecentTool,
+    LogReadTool,
     ReadLatestTool,
     ReadSimilarTool,
     TestExtractionPromptTool,
@@ -536,7 +535,9 @@ class TestLogTools:
         ]
 
     @pytest.mark.asyncio
-    async def test_read_recent_window(self, tmp_path, mock_llm):
+    async def test_log_read_window_mode(self, tmp_path, mock_llm):
+        """A non-collector caller (scope=None) gets window-mode log_read: recent
+        entries within the fixed look-back window — no cursor, no count arg."""
         db = _make_db(tmp_path)
         await LogCreateTool(db, None).execute(
             name="events", description="x", inclusion="always", recall="recent"
@@ -544,20 +545,7 @@ class TestLogTools:
         await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="events", content="hello"
         )
-        rendered = await LogReadRecentTool(db).execute(memory="events", window_seconds=3600)
-        assert "hello" in rendered
-
-    @pytest.mark.asyncio
-    async def test_read_recent_default_window(self, tmp_path, mock_llm):
-        """log_read_recent is callable with only ``memory`` — window_seconds defaults to 3600."""
-        db = _make_db(tmp_path)
-        await LogCreateTool(db, None).execute(
-            name="events", description="x", inclusion="always", recall="recent"
-        )
-        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
-            memory="events", content="hello"
-        )
-        rendered = await LogReadRecentTool(db).execute(memory="events")
+        rendered = await LogReadTool(db, "chat", scope=None).execute(memory="events")
         assert "hello" in rendered
 
     @pytest.mark.asyncio
@@ -604,7 +592,7 @@ class TestLogTools:
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
 
-        read_next = LogReadNextTool(db, agent_name="extractor")
+        read_next = LogReadTool(db, agent_name="extractor", scope="extractor")
         rendered = await read_next.execute(memory="events")
 
         assert "first" in rendered
@@ -621,12 +609,12 @@ class TestLogTools:
         await append.execute(memory="events", content="first")
         await append.execute(memory="events", content="second")
 
-        read_next = LogReadNextTool(db, agent_name="extractor")
+        read_next = LogReadTool(db, agent_name="extractor", scope="extractor")
         await read_next.execute(memory="events")
         read_next.commit_pending()
 
         # A new instance after commit should see no entries (cursor caught up).
-        fresh = LogReadNextTool(db, agent_name="extractor")
+        fresh = LogReadTool(db, agent_name="extractor", scope="extractor")
         rendered = await fresh.execute(memory="events")
         assert rendered == "(no entries)"
 
@@ -640,12 +628,12 @@ class TestLogTools:
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         await append.execute(memory="events", content="first")
 
-        read_next = LogReadNextTool(db, agent_name="extractor")
+        read_next = LogReadTool(db, agent_name="extractor", scope="extractor")
         await read_next.execute(memory="events")
         read_next.discard_pending()
 
         # Cursor still at None; a new read sees the same entries.
-        fresh = LogReadNextTool(db, agent_name="extractor")
+        fresh = LogReadTool(db, agent_name="extractor", scope="extractor")
         rendered = await fresh.execute(memory="events")
         assert "first" in rendered
 
@@ -666,16 +654,16 @@ class TestLogTools:
         )
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
         # Append more entries than the bound to confirm trimming
-        n_entries = PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT + 5
+        n_entries = PennyConstants.LOG_READ_LIMIT + 5
         for i in range(n_entries):
             await append.execute(memory="events", content=f"entry-{i:02d}")
 
-        read_next = LogReadNextTool(db, agent_name="brand-new-collector")
+        read_next = LogReadTool(db, agent_name="brand-new-collector", scope="brand-new-collector")
         rendered = await read_next.execute(memory="events")
 
         # Exactly the latest N entries — entry-(n-N) through entry-(n-1)
         # should appear; older entries should not.
-        for i in range(n_entries - PennyConstants.LOG_READ_NEXT_INITIAL_LIMIT, n_entries):
+        for i in range(n_entries - PennyConstants.LOG_READ_LIMIT, n_entries):
             assert f"entry-{i:02d}" in rendered
         # The first 5 entries must be excluded
         assert "entry-00" not in rendered
@@ -696,18 +684,55 @@ class TestLogTools:
         for i in range(15):
             await append.execute(memory="events", content=f"old-{i:02d}")
 
-        read_next = LogReadNextTool(db, agent_name="extractor")
+        read_next = LogReadTool(db, agent_name="extractor", scope="extractor")
         await read_next.execute(memory="events")
         read_next.commit_pending()
 
         # New entries arrive
         await append.execute(memory="events", content="new-after-cursor")
 
-        fresh = LogReadNextTool(db, agent_name="extractor")
+        fresh = LogReadTool(db, agent_name="extractor", scope="extractor")
         rendered = await fresh.execute(memory="events")
         assert "new-after-cursor" in rendered
         # Old entries excluded by the bound stay excluded
         assert "old-00" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_cursor_read_is_capped_and_advances_by_batch(self, tmp_path, mock_llm):
+        """With a cursor established, a backlog larger than the batch bound is
+        returned in bounded chunks — read N, cursor advances by N, the next read
+        picks up the next N.  The caller never reasons about a count."""
+        from penny.constants import PennyConstants
+
+        limit = PennyConstants.LOG_READ_LIMIT
+        db = _make_db(tmp_path)
+        await LogCreateTool(db, None).execute(
+            name="events", description="x", inclusion="always", recall="recent"
+        )
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+
+        # Establish a cursor, then pile up a backlog bigger than one batch.
+        await append.execute(memory="events", content="seed")
+        seed_read = LogReadTool(db, agent_name="extractor", scope="extractor")
+        await seed_read.execute(memory="events")
+        seed_read.commit_pending()
+
+        backlog = limit + 3
+        for i in range(backlog):
+            await append.execute(memory="events", content=f"backlog-{i:02d}")
+
+        first = LogReadTool(db, agent_name="extractor", scope="extractor")
+        rendered_first = await first.execute(memory="events")
+        first.commit_pending()
+        # Exactly one batch — the oldest N of the backlog, not all of it.
+        assert rendered_first.count("backlog-") == limit
+        assert "backlog-00" in rendered_first
+        assert f"backlog-{backlog - 1:02d}" not in rendered_first
+
+        # The next read picks up the remainder since the advanced cursor.
+        second = LogReadTool(db, agent_name="extractor", scope="extractor")
+        rendered_second = await second.execute(memory="events")
+        assert f"backlog-{backlog - 1:02d}" in rendered_second
 
     @pytest.mark.asyncio
     async def test_per_agent_cursors_are_independent(self, tmp_path, mock_llm):
@@ -720,12 +745,12 @@ class TestLogTools:
             memory="events", content="hello"
         )
 
-        agent_a = LogReadNextTool(db, agent_name="a")
+        agent_a = LogReadTool(db, agent_name="a", scope="a")
         await agent_a.execute(memory="events")
         agent_a.commit_pending()
 
         # Agent B has its own cursor and still sees the entry.
-        agent_b = LogReadNextTool(db, agent_name="b")
+        agent_b = LogReadTool(db, agent_name="b", scope="b")
         rendered = await agent_b.execute(memory="events")
         assert "hello" in rendered
 
@@ -1032,8 +1057,7 @@ class TestFactory:
         "collection_read_random",
         "collection_keys",
         "collection_metadata",
-        "log_read_recent",
-        "log_read_next",
+        "log_read",
         "read_latest",
         "read_similar",
         "exists",

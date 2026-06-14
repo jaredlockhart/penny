@@ -37,7 +37,7 @@ _QUALITY_PASS_RATE = 0.6
 
 _DIGEST_PROMPT = (
     "Share one fresh daily digest thought.\n"
-    '1. log_read_recent("penny-messages") — re-read what you sent so you do not '
+    '1. log_read("penny-messages") — re-read what you sent so you do not '
     "repeat yourself.\n"
     "2. Compose a short digest of the latest items.\n"
     "3. send_message the digest.\n"
