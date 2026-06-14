@@ -37,9 +37,32 @@ from penny.database import Database
 from penny.database.memory_store import LogEntryInput
 from penny.database.models import Memory
 from penny.llm.client import LlmClient
-from penny.tools.memory_tools import DoneTool, check_extraction_prompt
+from penny.tools.memory_tools import (
+    CollectionDeleteEntryTool,
+    CollectionMoveTool,
+    CollectionWriteTool,
+    DoneTool,
+    LogAppendTool,
+    UpdateEntryTool,
+    check_extraction_prompt,
+)
+from penny.tools.send_message import SendMessageTool
 
 logger = logging.getLogger(__name__)
+
+# Tools whose successful use means a cycle produced work — it changed a
+# collection or reached out to the user.  Reads and ``done()`` don't count; a
+# run of only those is "idle" and feeds the auto-throttle counter.
+_WORK_TOOLS = frozenset(
+    {
+        CollectionWriteTool.name,
+        UpdateEntryTool.name,
+        CollectionDeleteEntryTool.name,
+        CollectionMoveTool.name,
+        LogAppendTool.name,
+        SendMessageTool.name,
+    }
+)
 
 
 class Collector(BackgroundAgent):
@@ -168,6 +191,7 @@ class Collector(BackgroundAgent):
                 else:
                     self._log_run(collection, response)
                     self._tag_promptlog_run(collection, run_id, response)
+                    self._apply_throttle(collection, response)
                 self._current_target = None
         _, summary = self._extract_done_args(response)
         tool_trace = self._format_tool_trace(response)
@@ -194,6 +218,46 @@ class Collector(BackgroundAgent):
         """Stringify a tool argument value, truncating to 50 chars."""
         rendered = str(value)
         return rendered if len(rendered) <= 50 else rendered[:47] + "..."
+
+    @staticmethod
+    def _produced_work(response: ControllerResponse | None) -> bool:
+        """Did this cycle change a collection or message the user?
+
+        True when a state-changing tool (write / update / delete / move /
+        log_append / send_message) succeeded.  A run of only reads + ``done()``
+        is idle — it found nothing to do.
+        """
+        if response is None:
+            return False
+        return any(
+            not record.failed and record.tool in _WORK_TOOLS for record in response.tool_calls
+        )
+
+    def _apply_throttle(self, collection: Memory, response: ControllerResponse | None) -> None:
+        """Auto-tune the collection's interval from this cycle's productivity.
+
+        A productive cycle snaps the interval back to the user's set cadence
+        (``base_interval_seconds``) and clears the idle counter.  After
+        ``COLLECTOR_THROTTLE_AFTER`` consecutive idle cycles the interval
+        doubles (capped at ``COLLECTOR_MAX_INTERVAL``) and the counter resets.
+        ``COLLECTOR_THROTTLE_AFTER = 0`` disables it.
+        """
+        threshold = int(self.config.runtime.COLLECTOR_THROTTLE_AFTER)
+        base = collection.base_interval_seconds
+        current = collection.collector_interval_seconds
+        if threshold <= 0 or base is None or current is None:
+            return
+        if self._produced_work(response):
+            interval, idle = base, 0
+        else:
+            idle = collection.consecutive_idle_runs + 1
+            if idle >= threshold:
+                ceiling = int(self.config.runtime.COLLECTOR_MAX_INTERVAL)
+                interval, idle = min(current * 2, ceiling), 0
+            else:
+                interval = current
+        if interval != current or idle != collection.consecutive_idle_runs:
+            self.db.memories.set_cadence(collection.name, interval, idle)
 
     # ── Per-cycle audit log ───────────────────────────────────────────────
 

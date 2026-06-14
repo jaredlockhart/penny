@@ -73,6 +73,19 @@ def _validate_positive_int(value: str) -> int:
     return parsed
 
 
+def _validate_non_negative_int(value: str) -> int:
+    """Validate a non-negative integer (0 allowed — e.g. to disable a feature)."""
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise ValueError("must be a non-negative integer") from e
+
+    if parsed < 0:
+        raise ValueError("must be a non-negative integer")
+
+    return parsed
+
+
 def _validate_positive_float(value: str) -> float:
     """Validate positive float."""
     try:
@@ -167,6 +180,32 @@ ConfigParam(
     type=float,
     default=30.0,
     validator=_validate_positive_float,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="COLLECTOR_THROTTLE_AFTER",
+    description=(
+        "Consecutive idle cycles (no entries written / messages sent) before a "
+        "collector backs off — its interval doubles, then the counter resets.  "
+        "A productive cycle snaps the interval back to the user's set cadence.  "
+        "0 disables auto-throttle."
+    ),
+    type=int,
+    default=3,
+    validator=_validate_non_negative_int,
+    group=GROUP_BACKGROUND,
+)
+
+ConfigParam(
+    key="COLLECTOR_MAX_INTERVAL",
+    description=(
+        "Ceiling (seconds) for auto-throttle backoff — a collector's interval "
+        "never doubles past this.  Default 604800 (one week)."
+    ),
+    type=int,
+    default=604800,
+    validator=_validate_positive_int,
     group=GROUP_BACKGROUND,
 )
 

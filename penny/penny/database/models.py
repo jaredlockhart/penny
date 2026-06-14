@@ -230,6 +230,13 @@ class Memory(SQLModel, table=True):
     archived: bool = Field(default=False, index=True)
     extraction_prompt: str | None = Field(default=None)
     collector_interval_seconds: int | None = Field(default=None)
+    # The user's intended cadence — the value the collector snaps back to when a
+    # cycle produces work.  ``collector_interval_seconds`` is the *current*
+    # cadence (possibly auto-throttled upward); this is the floor to restore.
+    base_interval_seconds: int | None = Field(default=None)
+    # Consecutive cycles that produced no work; at COLLECTOR_THROTTLE_AFTER the
+    # collector doubles its interval and resets this to 0.  See agents/collector.
+    consecutive_idle_runs: int = Field(default=0, sa_column_kwargs={"server_default": "0"})
     # The user's expressed goal when this collection was created, in their
     # own words — the spec a quality collector judges the ``extraction_prompt``
     # and observed behavior against.  Set once at creation, immutable

@@ -278,6 +278,9 @@ class MemoryStore:
                 archived=archived,
                 extraction_prompt=extraction_prompt,
                 collector_interval_seconds=collector_interval_seconds,
+                # The create cadence is the user's intended cadence — the
+                # snap-back target for auto-throttle.
+                base_interval_seconds=collector_interval_seconds,
                 intent=intent,
                 created_at=datetime.now(UTC),
             )
@@ -373,7 +376,12 @@ class MemoryStore:
             if extraction_prompt is not None:
                 memory.extraction_prompt = extraction_prompt
             if collector_interval_seconds is not None:
+                # Editing the interval declares a new intended cadence: it
+                # becomes both the current and the snap-back base, and clears
+                # any in-flight throttle backoff.
                 memory.collector_interval_seconds = collector_interval_seconds
+                memory.base_interval_seconds = collector_interval_seconds
+                memory.consecutive_idle_runs = 0
             if intent is not None:
                 memory.intent = intent
             memory.updated_at = datetime.now(UTC)
@@ -398,6 +406,19 @@ class MemoryStore:
             session.add(memory)
             session.commit()
         self._notify_changed(name)
+
+    def set_cadence(self, name: str, interval_seconds: int, consecutive_idle_runs: int) -> None:
+        """Persist a collection's (possibly auto-throttled) current interval and
+        idle-run counter.  The collector computes the new values per the
+        throttle heuristic; this just writes them.  No-op if the memory is gone."""
+        with self._session() as session:
+            memory = session.get(Memory, _slug(name))
+            if memory is None:
+                return
+            memory.collector_interval_seconds = interval_seconds
+            memory.consecutive_idle_runs = consecutive_idle_runs
+            session.add(memory)
+            session.commit()
 
     # ── Embedding backfill ──────────────────────────────────────────────────
 

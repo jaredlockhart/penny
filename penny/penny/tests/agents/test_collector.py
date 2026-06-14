@@ -43,6 +43,13 @@ def _make_collector(test_config, tmp_path) -> tuple[Collector, Database]:
     return collector, db
 
 
+def _get(db: Database, name: str) -> Memory:
+    """Fetch a memory that the test just created — asserts it exists (typed)."""
+    memory = db.memories.get(name)
+    assert memory is not None
+    return memory
+
+
 def test_collector_name_is_singular(test_config, tmp_path):
     """One agent identity ("collector") for promptlog/run tagging across all
     collections.  Read cursors do NOT key on this name — they key on the bound
@@ -670,3 +677,120 @@ async def test_cycle_runs_under_lock(test_config, tmp_path):
     assert observed["target"] == "games"
     # Lock is released once the cycle finishes.
     assert collector._cycle_lock.locked() is False
+
+
+# ── Auto-throttle ─────────────────────────────────────────────────────────────
+
+
+def _idle_response() -> ControllerResponse:
+    """A cycle that only read and exited — no work."""
+    return ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="read_latest", arguments={}, failed=False),
+            ToolCallRecord(tool="done", arguments={}, failed=False),
+        ],
+    )
+
+
+def _work_response() -> ControllerResponse:
+    """A cycle that wrote an entry — produced work."""
+    return ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="collection_write", arguments={}, failed=False)],
+    )
+
+
+def test_produced_work_distinguishes_state_changes():
+    assert Collector._produced_work(_work_response()) is True
+    assert Collector._produced_work(_idle_response()) is False
+    assert Collector._produced_work(None) is False
+    # A failed mutation isn't work.
+    failed = ControllerResponse(
+        answer="", tool_calls=[ToolCallRecord(tool="collection_write", arguments={}, failed=True)]
+    )
+    assert Collector._produced_work(failed) is False
+
+
+def test_create_stamps_base_interval(test_config, tmp_path):
+    """The create cadence becomes the snap-back base."""
+    _, db = _make_collector(test_config, tmp_path)
+    db.memories.create_collection(
+        "quiet",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="x" * 30,
+        collector_interval_seconds=3600,
+    )
+    assert _get(db, "quiet").base_interval_seconds == 3600
+
+
+def test_throttle_backs_off_after_n_idle_runs_then_snaps_back(test_config, tmp_path):
+    """N consecutive idle cycles double the interval; a productive cycle snaps it
+    back to the user's cadence.  Uses the default COLLECTOR_THROTTLE_AFTER (3)."""
+    collector, db = _make_collector(test_config, tmp_path)
+    db.memories.create_collection(
+        "quiet",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="x" * 30,
+        collector_interval_seconds=3600,
+    )
+
+    # Idle cycles accumulate; the 3rd doubles the interval and resets the counter.
+    for interval, idle in [(3600, 1), (3600, 2), (7200, 0)]:
+        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+        m = _get(db, "quiet")
+        assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (interval, idle)
+
+    # Three more idle cycles double again: 2h → 4h.
+    for _ in range(3):
+        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+    assert _get(db, "quiet").collector_interval_seconds == 14400
+
+    # A productive cycle snaps back to the base cadence and clears the counter.
+    collector._apply_throttle(_get(db, "quiet"), _work_response())
+    m = _get(db, "quiet")
+    assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (3600, 0)
+
+
+def test_throttle_caps_at_max_interval(test_config, tmp_path):
+    """Backoff never doubles past COLLECTOR_MAX_INTERVAL (default 604800 = weekly)."""
+    collector, db = _make_collector(test_config, tmp_path)
+    db.memories.create_collection(
+        "quiet",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="x" * 30,
+        collector_interval_seconds=3600,
+    )
+    # Far more idle cycles than needed to blow past the ceiling unclamped.
+    for _ in range(40):
+        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+    assert _get(db, "quiet").collector_interval_seconds == 604800
+
+
+def test_editing_interval_resets_base_and_idle(test_config, tmp_path):
+    """Editing the interval re-declares the intended cadence and clears throttle."""
+    collector, db = _make_collector(test_config, tmp_path)
+    db.memories.create_collection(
+        "quiet",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt="x" * 30,
+        collector_interval_seconds=3600,
+    )
+    # Throttle it up first.
+    for _ in range(3):
+        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+    assert _get(db, "quiet").collector_interval_seconds == 7200
+
+    db.memories.update_collection_metadata("quiet", collector_interval_seconds=1800)
+    m = _get(db, "quiet")
+    assert m.collector_interval_seconds == 1800
+    assert m.base_interval_seconds == 1800
+    assert m.consecutive_idle_runs == 0
