@@ -215,14 +215,14 @@ class ScheduleRecord(BaseModel):
 
 
 class BrowserRunOutcomeUpdate(BaseModel):
-    """Push notification: a promptlog run's outcome (outcome/reason/target) was set.
-    ``outcome`` is a RunOutcome value: failed | no_work | worked | cancelled."""
+    """Push notification: a promptlog run's outcome (outcome/reason) was set.
+    ``outcome`` is a RunOutcome value: failed | no_work | worked | cancelled.
+    (The run's collection is carried by each prompt's ``run_target``.)"""
 
     type: str = BROWSER_RESP_TYPE_RUN_OUTCOME
     run_id: str
     outcome: str
     reason: str
-    target: str | None = None
 
 
 class BrowserMemoryDetailRequest(BaseModel):

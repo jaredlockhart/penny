@@ -377,10 +377,15 @@ def test_tag_promptlog_run_stamps_outcome_reason_target(test_config, tmp_path):
     promptlog row so the addon's prompts tab can render the outcome badge."""
     collector, db = _make_collector(test_config, tmp_path)
     db.messages.log_prompt(
-        model="test", messages=[], response={}, agent_name="collector", run_id="run-xyz"
+        model="test",
+        messages=[],
+        response={},
+        agent_name="collector",
+        run_id="run-xyz",
+        run_target="board-games",
     )
 
-    collector._tag_promptlog_run(_target(), "run-xyz", RunOutcome.WORKED, "wrote 2 new games")
+    collector._tag_promptlog_run("run-xyz", RunOutcome.WORKED, "wrote 2 new games")
 
     runs = db.messages.get_prompt_log_runs()
     assert runs[0]["run_outcome"] == "worked"
@@ -394,7 +399,7 @@ def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
     crashing or smearing onto an unrelated row."""
     collector, db = _make_collector(test_config, tmp_path)
 
-    collector._tag_promptlog_run(_target(), "never-logged", RunOutcome.FAILED, "x")
+    collector._tag_promptlog_run("never-logged", RunOutcome.FAILED, "x")
 
     assert db.messages.get_prompt_log_runs() == []
 
@@ -572,14 +577,24 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
     )
 
     db.messages.log_prompt(
-        model="test", messages=[], response={}, agent_name="collector", run_id="run-A"
+        model="test",
+        messages=[],
+        response={},
+        agent_name="collector",
+        run_id="run-A",
+        run_target=target_a.name,
     )
     db.messages.log_prompt(
-        model="test", messages=[], response={}, agent_name="collector", run_id="run-B"
+        model="test",
+        messages=[],
+        response={},
+        agent_name="collector",
+        run_id="run-B",
+        run_target=target_b.name,
     )
 
-    collector._tag_promptlog_run(target_a, "run-A", RunOutcome.NO_WORK, "ok-A")
-    collector._tag_promptlog_run(target_b, "run-B", RunOutcome.NO_WORK, "ok-B")
+    collector._tag_promptlog_run("run-A", RunOutcome.NO_WORK, "ok-A")
+    collector._tag_promptlog_run("run-B", RunOutcome.NO_WORK, "ok-B")
 
     runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
     assert runs["run-A"]["run_target"] == "notified-thoughts"

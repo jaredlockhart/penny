@@ -240,13 +240,13 @@ class Collector(BackgroundAgent):
                 # would otherwise be re-attempted on every tick.
                 self.db.memories.mark_collected(collection.name)
                 if cancelled:
-                    self._tag_promptlog_run_cancelled(collection, run_id)
+                    self._tag_promptlog_run_cancelled(run_id)
                 else:
                     # One determination of this cycle's outcome, used for the
                     # audit log, the promptlog tag, and the throttle alike.
                     outcome, summary = self._cycle_result(response)
                     self._log_run(collection, outcome, summary)
-                    self._tag_promptlog_run(collection, run_id, outcome, summary)
+                    self._tag_promptlog_run(run_id, outcome, summary)
                     self._apply_throttle(collection, outcome)
                 self._current_target = None
         _, summary = self._extract_done_args(response)
@@ -348,20 +348,19 @@ class Collector(BackgroundAgent):
             author=self.name,
         )
 
-    def _tag_promptlog_run(
-        self, target: Memory, run_id: str, outcome: RunOutcome, summary: str
-    ) -> None:
+    def _tag_promptlog_run(self, run_id: str, outcome: RunOutcome, summary: str) -> None:
         """Stamp the cycle outcome onto the matching promptlog run.
 
         Drives the outcome badge in the addon's prompts tab — the same
-        ``(outcome, summary)`` the audit log gets, plus the target name so the
-        addon can attribute the run to a collection.  ``run_id`` is the caller's
-        UUID for this cycle; ``set_run_outcome`` is a no-op if no promptlog rows
-        exist for it (the cycle raised before the loop ever logged a prompt).
+        ``(outcome, summary)`` the audit log gets.  (The run's collection is
+        already on every prompt via the write-time ``run_target`` stamp.)
+        ``run_id`` is the caller's UUID for this cycle; ``set_run_outcome`` is a
+        no-op if no promptlog rows exist for it (the cycle raised before the loop
+        ever logged a prompt).
         """
-        self.db.messages.set_run_outcome(run_id, outcome.value, summary, target.name)
+        self.db.messages.set_run_outcome(run_id, outcome.value, summary)
 
-    def _tag_promptlog_run_cancelled(self, target: Memory, run_id: str) -> None:
+    def _tag_promptlog_run_cancelled(self, run_id: str) -> None:
         """Stamp a cycle that was cut off by foreground activity.
 
         Cancellation isn't a failure of the cycle's logic — it's the scheduler
@@ -373,7 +372,6 @@ class Collector(BackgroundAgent):
             run_id,
             RunOutcome.CANCELLED.value,
             "cancelled by foreground activity",
-            target.name,
         )
 
     @staticmethod

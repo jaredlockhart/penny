@@ -277,7 +277,6 @@ function connect(): void {
         run_id: data.run_id,
         outcome: data.outcome,
         reason: data.reason,
-        target: data.target,
       });
     } else if (data.type === WsIn.MemoriesResponse) {
       broadcastToSidebar({

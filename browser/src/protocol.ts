@@ -297,7 +297,6 @@ export interface WsIncomingRunOutcomePayload {
   run_id: string;
   outcome: RunOutcome;
   reason: string;
-  target: string | null;
 }
 
 export interface MemoryRecord {
@@ -645,7 +644,6 @@ export interface RuntimeRunOutcomeUpdate {
   run_id: string;
   outcome: RunOutcome;
   reason: string;
-  target: string | null;
 }
 
 /** Memories tab → background: request the memories list */

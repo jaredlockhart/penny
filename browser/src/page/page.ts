@@ -168,12 +168,7 @@ function handleMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.PromptLogUpdate) {
     handlePromptUpdate(message.prompt);
   } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
-    handleRunOutcome(
-      message.run_id,
-      message.outcome,
-      message.reason,
-      message.target,
-    );
+    handleRunOutcome(message.run_id, message.outcome, message.reason);
   } else if (message.type === RuntimeMessageType.SchedulesResponse) {
     renderSchedules(message.schedules, message.error);
   } else if (message.type === RuntimeMessageType.ConfigResponse) {
@@ -307,24 +302,19 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
   markRunActive(run.run_id, row);
 }
 
-function handleRunOutcome(
-  runId: string,
-  outcome: RunOutcome,
-  reason: string,
-  target: string | null,
-): void {
+function handleRunOutcome(runId: string, outcome: RunOutcome, reason: string): void {
   const run = allRuns.find((r) => r.run_id === runId);
   if (!run) return;
   run.run_outcome = outcome;
   run.run_reason = reason;
-  run.run_target = target;
 
   const row = runElements.get(runId);
   if (!row) return;
 
   const summary = row.querySelector(".run-summary");
   if (summary) {
-    summary.appendChild(createRunOutcome(outcome, reason, target));
+    // run_target is already on the run from its first prompt — stamped at write time.
+    summary.appendChild(createRunOutcome(outcome, reason, run.run_target));
   }
 
   // Dismiss spinner — run is complete
