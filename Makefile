@@ -3,7 +3,8 @@ RUFF_TARGETS = penny/
 # Exclude the live-model eval suite from the default test run — it's slow and
 # needs a running Ollama, so it never runs in make check / CI (see make eval).
 PYTEST_ARGS = penny/tests/ -v -m "not eval"
-EVAL_PYTEST_ARGS = penny/tests/eval/ -v -m eval
+# -s streams the PERF lines (wall time + tok/s, printed per case) live.
+EVAL_PYTEST_ARGS = penny/tests/eval/ -v -m eval -s
 TEAM_RUFF_TARGETS = penny_team/
 TEAM_PYTEST_ARGS = tests/ -v
 

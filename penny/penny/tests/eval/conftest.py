@@ -20,6 +20,7 @@ from penny.config import Config
 from penny.constants import ChannelType
 from penny.database import Database
 from penny.database.memory_store import EntryInput, Inclusion, RecallMode
+from penny.database.message_store import PromptPerf
 from penny.database.models import Memory
 from penny.penny import Penny
 from penny.tests.conftest import TEST_SENDER, run_penny_with_server
@@ -46,6 +47,40 @@ CollectorScorer = Callable[[Database, object, list[str]], list[str]]
 class SampleResult:
     passed: bool
     fails: list[str]
+
+
+@dataclass
+class _Perf:
+    """Running totals of model calls + tokens across a case's samples.
+
+    Sourced from the real promptlog (``duration_ms`` per call + token usage
+    stored in each response) — the same numbers prod records, not a harness
+    stopwatch.  Printed per case so ``make eval`` shows wall time and tok/s.
+    """
+
+    calls: int = 0
+    duration_ms: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, perf: PromptPerf) -> None:
+        self.calls += perf.calls
+        self.duration_ms += perf.duration_ms
+        self.input_tokens += perf.input_tokens
+        self.output_tokens += perf.output_tokens
+
+    def report(self, case_id: str, samples: int) -> None:
+        if not self.calls:
+            return
+        seconds = self.duration_ms / 1000
+        tokens_per_second = self.output_tokens / seconds if seconds else 0.0
+        per_call_ms = self.duration_ms / self.calls
+        print(
+            f"\nPERF [{case_id}] {samples} samples · {self.calls} calls · "
+            f"{seconds:.1f}s wall · {per_call_ms:.0f}ms/call · "
+            f"{self.input_tokens} in / {self.output_tokens} out tok · "
+            f"{tokens_per_second:.1f} tok/s"
+        )
 
 
 def _real_model_config(
@@ -180,6 +215,7 @@ def chat_eval(make_config: Callable[..., Config], tmp_path) -> ChatEval:
         timeout: float = 120.0,
     ) -> None:
         results: list[SampleResult] = []
+        perf = _Perf()
         for sample_index in range(samples):
             server = MockSignalServer()
             await server.start()
@@ -198,14 +234,15 @@ def chat_eval(make_config: Callable[..., Config], tmp_path) -> ChatEval:
                     try:
                         await server.push_message(sender=TEST_SENDER, content=message)
                         response = await server.wait_for_message(timeout=timeout)
+                        reply = str(response.get("message", ""))
+                        fails = score(penny.db, before, reply)
+                        results.append(SampleResult(not fails, fails))
                     except TimeoutError:
                         results.append(SampleResult(False, ["no reply within timeout"]))
-                        continue
-                    reply = str(response.get("message", ""))
-                    fails = score(penny.db, before, reply)
-                    results.append(SampleResult(not fails, fails))
+                    perf.add(penny.db.messages.prompt_perf())
             finally:
                 await server.stop()
+        perf.report(case_id, samples)
         _assert_threshold(case_id, results, min_pass_rate)
 
     return _run
@@ -236,6 +273,7 @@ def collector_eval(make_config: Callable[..., Config], tmp_path) -> CollectorEva
         min_pass_rate: float = 0.75,
     ) -> None:
         results: list[SampleResult] = []
+        perf = _Perf()
         for sample_index in range(samples):
             server = MockSignalServer()
             await server.start()
@@ -258,8 +296,10 @@ def collector_eval(make_config: Callable[..., Config], tmp_path) -> CollectorEva
                     ]
                     fails = score(penny.db, before, sent)
                     results.append(SampleResult(not fails, fails))
+                    perf.add(penny.db.messages.prompt_perf())
             finally:
                 await server.stop()
+        perf.report(case_id, samples)
         _assert_threshold(case_id, results, min_pass_rate)
 
     return _run
