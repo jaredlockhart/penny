@@ -501,14 +501,24 @@ h1 {
   border-radius: 10px;
 }
 
-.run-outcome-stored {
+.run-outcome-worked {
   color: #28a745;
   background: rgba(40, 167, 69, 0.1);
 }
 
-.run-outcome-discarded {
+.run-outcome-failed {
   color: #dc3545;
   background: rgba(220, 53, 69, 0.1);
+}
+
+.run-outcome-no-work {
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+}
+
+.run-outcome-cancelled {
+  color: #b8860b;
+  background: rgba(184, 134, 11, 0.1);
 }
 
 .run-meta,

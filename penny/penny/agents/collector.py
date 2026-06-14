@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from penny.agents.base import BackgroundAgent
 from penny.agents.models import ControllerResponse
 from penny.config import Config
-from penny.constants import PennyConstants
+from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
 from penny.database.memory_store import LogEntryInput
 from penny.database.models import Memory
@@ -70,11 +70,15 @@ class Collector(BackgroundAgent):
 
     name = "collector"
 
-    # Per-cycle audit-log markers — printable success/failure in the
-    # ``collector-runs`` entry.  Class-scoped: tied to this agent's
-    # behaviour, not used elsewhere in the project.
-    _RUN_SUCCESS_MARKER = "✅"
-    _RUN_FAILURE_MARKER = "❌"
+    # Per-outcome marker prefixed to the ``collector-runs`` entry — readable to
+    # the user in the addon and to Penny when she reads the log.  The outcome
+    # word itself is included too, so the state is unambiguous either way.
+    _OUTCOME_MARKER = {
+        RunOutcome.WORKED: "✅",
+        RunOutcome.NO_WORK: "💤",
+        RunOutcome.FAILED: "❌",
+        RunOutcome.CANCELLED: "⏸️",
+    }
 
     # Runtime rules every collector cycle gets, appended to whatever
     # extraction_prompt the chat agent (or migration) wrote on the
@@ -189,9 +193,12 @@ class Collector(BackgroundAgent):
                 if cancelled:
                     self._tag_promptlog_run_cancelled(collection, run_id)
                 else:
-                    self._log_run(collection, response)
-                    self._tag_promptlog_run(collection, run_id, response)
-                    self._apply_throttle(collection, response)
+                    # One determination of this cycle's outcome, used for the
+                    # audit log, the promptlog tag, and the throttle alike.
+                    outcome, summary = self._cycle_result(response)
+                    self._log_run(collection, outcome, summary)
+                    self._tag_promptlog_run(collection, run_id, outcome, summary)
+                    self._apply_throttle(collection, outcome)
                 self._current_target = None
         _, summary = self._extract_done_args(response)
         tool_trace = self._format_tool_trace(response)
@@ -233,21 +240,38 @@ class Collector(BackgroundAgent):
             not record.failed and record.tool in _WORK_TOOLS for record in response.tool_calls
         )
 
-    def _apply_throttle(self, collection: Memory, response: ControllerResponse | None) -> None:
-        """Auto-tune the collection's interval from this cycle's productivity.
+    @classmethod
+    def _cycle_result(cls, response: ControllerResponse | None) -> tuple[RunOutcome, str]:
+        """The cycle's outcome + its summary — the single determination read by
+        the audit log, the promptlog tag, and the throttle.
 
-        A productive cycle snaps the interval back to the user's set cadence
+        ``done(success=False)`` / max-steps / a crashed cycle → ``failed``.  A
+        clean completion is ``worked`` or ``no_work`` by whether a state-
+        changing tool actually fired (``_produced_work``).  (``cancelled`` is
+        handled separately — a preempted cycle never reaches here.)
+        """
+        success, summary = cls._extract_done_args(response)
+        if not success:
+            return RunOutcome.FAILED, summary
+        if cls._produced_work(response):
+            return RunOutcome.WORKED, summary
+        return RunOutcome.NO_WORK, summary
+
+    def _apply_throttle(self, collection: Memory, outcome: RunOutcome) -> None:
+        """Auto-tune the collection's interval from this cycle's outcome.
+
+        A ``worked`` cycle snaps the interval back to the user's set cadence
         (``base_interval_seconds``) and clears the idle counter.  After
-        ``COLLECTOR_THROTTLE_AFTER`` consecutive idle cycles the interval
-        doubles (capped at ``COLLECTOR_MAX_INTERVAL``) and the counter resets.
-        ``COLLECTOR_THROTTLE_AFTER = 0`` disables it.
+        ``COLLECTOR_THROTTLE_AFTER`` consecutive non-``worked`` cycles the
+        interval doubles (capped at ``COLLECTOR_MAX_INTERVAL``) and the counter
+        resets.  ``COLLECTOR_THROTTLE_AFTER = 0`` disables it.
         """
         threshold = int(self.config.runtime.COLLECTOR_THROTTLE_AFTER)
         base = collection.base_interval_seconds
         current = collection.collector_interval_seconds
         if threshold <= 0 or base is None or current is None:
             return
-        if self._produced_work(response):
+        if outcome == RunOutcome.WORKED:
             interval, idle = base, 0
         else:
             idle = collection.consecutive_idle_runs + 1
@@ -261,48 +285,44 @@ class Collector(BackgroundAgent):
 
     # ── Per-cycle audit log ───────────────────────────────────────────────
 
-    def _log_run(self, target: Memory, response: ControllerResponse | None) -> None:
+    def _log_run(self, target: Memory, outcome: RunOutcome, summary: str) -> None:
         """Append one entry to ``collector-runs`` describing this cycle.
 
-        Reads ``done()``'s ``success`` and ``summary`` args from the last
-        recorded tool call.  When the cycle hit max_steps without ever
-        calling done, both are synthetic (``success=False`` + a sentinel
-        summary) so the log still has a row per cycle.
+        The entry leads with the outcome (marker + word) so the state is
+        legible both to the user in the addon and to Penny when she reads the
+        log — e.g. ``[espresso-gear] 💤 no_work — nothing new``.
         """
-        success, summary = self._extract_done_args(response)
-        marker = self._RUN_SUCCESS_MARKER if success else self._RUN_FAILURE_MARKER
+        marker = self._OUTCOME_MARKER[outcome]
         self.db.memories.append(
             PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
-            [LogEntryInput(content=f"[{target.name}] {marker} {summary}")],
+            [LogEntryInput(content=f"[{target.name}] {marker} {outcome.value} — {summary}")],
             author=self.name,
         )
 
     def _tag_promptlog_run(
-        self, target: Memory, run_id: str, response: ControllerResponse | None
+        self, target: Memory, run_id: str, outcome: RunOutcome, summary: str
     ) -> None:
         """Stamp the cycle outcome onto the matching promptlog run.
 
-        Drives the green/red tag in the addon's prompts tab — same
-        ``(success, summary)`` the audit log gets, plus the target name
-        so the addon can attribute the run to a collection.  ``run_id``
-        is the caller's UUID for this cycle; ``set_run_outcome`` is a
-        no-op if no promptlog rows exist for it (the cycle raised before
-        the loop ever logged a prompt).
+        Drives the outcome badge in the addon's prompts tab — the same
+        ``(outcome, summary)`` the audit log gets, plus the target name so the
+        addon can attribute the run to a collection.  ``run_id`` is the caller's
+        UUID for this cycle; ``set_run_outcome`` is a no-op if no promptlog rows
+        exist for it (the cycle raised before the loop ever logged a prompt).
         """
-        success, summary = self._extract_done_args(response)
-        self.db.messages.set_run_outcome(run_id, success, summary, target.name)
+        self.db.messages.set_run_outcome(run_id, outcome.value, summary, target.name)
 
     def _tag_promptlog_run_cancelled(self, target: Memory, run_id: str) -> None:
         """Stamp a cycle that was cut off by foreground activity.
 
-        Cancellation isn't a failure of the cycle's logic — it's the
-        scheduler making room for a user message — so the tag uses
-        ``success=True`` with a clear reason.  Keeps these out of the
-        addon's failure-rate budget.
+        Cancellation isn't a failure of the cycle's logic — it's the scheduler
+        making room for a user message — so it gets its own ``cancelled``
+        outcome rather than ``failed``, keeping it out of the addon's
+        failure-rate budget (and the throttle ignores it).
         """
         self.db.messages.set_run_outcome(
             run_id,
-            True,
+            RunOutcome.CANCELLED.value,
             "cancelled by foreground activity",
             target.name,
         )

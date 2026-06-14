@@ -173,11 +173,11 @@ class BrowserChannel(MessageChannel):
             asyncio.ensure_future(conn.ws.send(message))
 
     def _on_run_outcome_set(
-        self, run_id: str, success: bool, reason: str, target: str | None
+        self, run_id: str, outcome: str, reason: str, target: str | None
     ) -> None:
         """Callback fired when a run outcome is set — broadcast to browsers."""
         payload = BrowserRunOutcomeUpdate(
-            run_id=run_id, success=success, reason=reason, target=target
+            run_id=run_id, outcome=outcome, reason=reason, target=target
         )
         message = payload.model_dump_json()
         for conn in self._connections.values():

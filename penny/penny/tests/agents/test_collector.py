@@ -15,7 +15,7 @@ import pytest
 from penny.agents.base import CycleResult
 from penny.agents.collector import Collector
 from penny.agents.models import ControllerResponse, ToolCallRecord
-from penny.constants import PennyConstants
+from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
 from penny.database.memory_store import Inclusion, LogEntryInput, RecallMode
 from penny.database.models import Memory
@@ -308,10 +308,8 @@ def _seed_collector_runs_log(db: Database) -> None:
     db.memories.create_log("collector-runs", "audit log", Inclusion.NEVER, RecallMode.RECENT)
 
 
-def test_log_run_writes_done_summary_on_success(test_config, tmp_path):
-    collector, db = _make_collector(test_config, tmp_path)
-    _seed_collector_runs_log(db)
-    target = Memory(
+def _target() -> Memory:
+    return Memory(
         name="board-games",
         type="collection",
         description="x",
@@ -319,113 +317,73 @@ def test_log_run_writes_done_summary_on_success(test_config, tmp_path):
         archived=False,
         extraction_prompt="x",
     )
-    response = ControllerResponse(
+
+
+def test_cycle_result_classifies_worked_no_work_failed():
+    """One determination: ``done(success=False)`` / no done() → ``failed``; a
+    clean completion → ``worked`` or ``no_work`` by whether a state-changing
+    tool actually fired."""
+    worked = ControllerResponse(
         answer="",
         tool_calls=[
             ToolCallRecord(tool="collection_write", arguments={}),
-            ToolCallRecord(
-                tool="done",
-                arguments={"success": True, "summary": "wrote 2 new games"},
-            ),
+            ToolCallRecord(tool="done", arguments={"success": True, "summary": "wrote 2"}),
         ],
     )
-    collector._log_run(target, response)
-    entries = db.memories.read_latest("collector-runs")
-    assert len(entries) == 1
-    assert "[board-games]" in entries[0].content
-    assert "✅" in entries[0].content
-    assert "wrote 2 new games" in entries[0].content
+    assert Collector._cycle_result(worked) == (RunOutcome.WORKED, "wrote 2")
 
-
-def test_log_run_marks_failure_when_done_says_so(test_config, tmp_path):
-    collector, db = _make_collector(test_config, tmp_path)
-    _seed_collector_runs_log(db)
-    target = Memory(
-        name="board-games",
-        type="collection",
-        description="x",
-        recall=RecallMode.RECENT.value,
-        archived=False,
-        extraction_prompt="x",
-    )
-    response = ControllerResponse(
+    no_work = ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(
-                tool="done",
-                arguments={"success": False, "summary": "no source URL found"},
-            ),
+            ToolCallRecord(tool="read_latest", arguments={}),
+            ToolCallRecord(tool="done", arguments={"success": True, "summary": "no new matches"}),
         ],
     )
-    collector._log_run(target, response)
-    content = db.memories.read_latest("collector-runs")[0].content
-    assert "❌" in content
-    assert "no source URL found" in content
+    assert Collector._cycle_result(no_work) == (RunOutcome.NO_WORK, "no new matches")
+
+    failed = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="done", arguments={"success": False, "summary": "no URL"})],
+    )
+    assert Collector._cycle_result(failed)[0] == RunOutcome.FAILED
+
+    no_done = ControllerResponse(
+        answer="", tool_calls=[ToolCallRecord(tool="browse", arguments={"queries": ["x"]})]
+    )
+    assert Collector._cycle_result(no_done)[0] == RunOutcome.FAILED
 
 
-def test_log_run_handles_no_done_call(test_config, tmp_path):
-    """If the cycle hits max_steps without ever calling done(), the audit
-    log still gets a row — with success=false and a sentinel summary."""
+def test_log_run_writes_outcome_marker_word_and_summary(test_config, tmp_path):
+    """Each ``collector-runs`` entry leads with the outcome (marker + word) so
+    the state is legible to both the user and Penny reading the log."""
     collector, db = _make_collector(test_config, tmp_path)
     _seed_collector_runs_log(db)
-    target = Memory(
-        name="board-games",
-        type="collection",
-        description="x",
-        recall=RecallMode.RECENT.value,
-        archived=False,
-        extraction_prompt="x",
-    )
-    response = ControllerResponse(
-        answer="",
-        tool_calls=[
-            ToolCallRecord(tool="browse", arguments={"queries": ["x"]}),
-        ],
-    )
-    collector._log_run(target, response)
-    content = db.memories.read_latest("collector-runs")[0].content
-    assert "❌" in content
-    assert "max steps" in content.lower() or "no done" in content.lower()
+
+    collector._log_run(_target(), RunOutcome.WORKED, "wrote 2 new games")
+    collector._log_run(_target(), RunOutcome.NO_WORK, "nothing new")
+    collector._log_run(_target(), RunOutcome.FAILED, "no source URL found")
+    joined = "\n".join(e.content for e in db.memories.read_latest("collector-runs"))
+
+    assert "[board-games] ✅ worked — wrote 2 new games" in joined
+    assert "💤 no_work — nothing new" in joined
+    assert "❌ failed — no source URL found" in joined
 
 
 # ── Promptlog run-outcome tagging ────────────────────────────────────────
 
 
-def test_tag_promptlog_run_stamps_success_reason_target(test_config, tmp_path):
-    """The cycle's done(success, summary) and the bound target name land on
-    the matching promptlog row so the addon's prompts tab can render the
-    green/red collector-result tag.  ``run_id`` and ``response`` are
-    passed in directly — no instance state."""
+def test_tag_promptlog_run_stamps_outcome_reason_target(test_config, tmp_path):
+    """The cycle's outcome + summary + bound target land on the matching
+    promptlog row so the addon's prompts tab can render the outcome badge."""
     collector, db = _make_collector(test_config, tmp_path)
-    target = Memory(
-        name="board-games",
-        type="collection",
-        description="x",
-        recall=RecallMode.RECENT.value,
-        archived=False,
-        extraction_prompt="x",
-    )
     db.messages.log_prompt(
-        model="test",
-        messages=[],
-        response={},
-        agent_name="collector",
-        run_id="run-xyz",
-    )
-    response = ControllerResponse(
-        answer="",
-        tool_calls=[
-            ToolCallRecord(
-                tool="done",
-                arguments={"success": True, "summary": "wrote 2 new games"},
-            ),
-        ],
+        model="test", messages=[], response={}, agent_name="collector", run_id="run-xyz"
     )
 
-    collector._tag_promptlog_run(target, "run-xyz", response)
+    collector._tag_promptlog_run(_target(), "run-xyz", RunOutcome.WORKED, "wrote 2 new games")
 
     runs = db.messages.get_prompt_log_runs()
-    assert runs[0]["run_success"] is True
+    assert runs[0]["run_outcome"] == "worked"
     assert runs[0]["run_reason"] == "wrote 2 new games"
     assert runs[0]["run_target"] == "board-games"
 
@@ -435,16 +393,8 @@ def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
     loop logged anything), tagging silently does nothing rather than
     crashing or smearing onto an unrelated row."""
     collector, db = _make_collector(test_config, tmp_path)
-    target = Memory(
-        name="board-games",
-        type="collection",
-        description="x",
-        recall=RecallMode.RECENT.value,
-        archived=False,
-        extraction_prompt="x",
-    )
 
-    collector._tag_promptlog_run(target, "never-logged", response=None)
+    collector._tag_promptlog_run(_target(), "never-logged", RunOutcome.FAILED, "x")
 
     assert db.messages.get_prompt_log_runs() == []
 
@@ -628,17 +578,8 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
         model="test", messages=[], response={}, agent_name="collector", run_id="run-B"
     )
 
-    response_a = ControllerResponse(
-        answer="",
-        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-A"})],
-    )
-    response_b = ControllerResponse(
-        answer="",
-        tool_calls=[ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok-B"})],
-    )
-
-    collector._tag_promptlog_run(target_a, "run-A", response_a)
-    collector._tag_promptlog_run(target_b, "run-B", response_b)
+    collector._tag_promptlog_run(target_a, "run-A", RunOutcome.NO_WORK, "ok-A")
+    collector._tag_promptlog_run(target_b, "run-B", RunOutcome.NO_WORK, "ok-B")
 
     runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
     assert runs["run-A"]["run_target"] == "notified-thoughts"
@@ -741,17 +682,17 @@ def test_throttle_backs_off_after_n_idle_runs_then_snaps_back(test_config, tmp_p
 
     # Idle cycles accumulate; the 3rd doubles the interval and resets the counter.
     for interval, idle in [(3600, 1), (3600, 2), (7200, 0)]:
-        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+        collector._apply_throttle(_get(db, "quiet"), RunOutcome.NO_WORK)
         m = _get(db, "quiet")
         assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (interval, idle)
 
     # Three more idle cycles double again: 2h → 4h.
     for _ in range(3):
-        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+        collector._apply_throttle(_get(db, "quiet"), RunOutcome.NO_WORK)
     assert _get(db, "quiet").collector_interval_seconds == 14400
 
     # A productive cycle snaps back to the base cadence and clears the counter.
-    collector._apply_throttle(_get(db, "quiet"), _work_response())
+    collector._apply_throttle(_get(db, "quiet"), RunOutcome.WORKED)
     m = _get(db, "quiet")
     assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (3600, 0)
 
@@ -769,7 +710,7 @@ def test_throttle_caps_at_max_interval(test_config, tmp_path):
     )
     # Far more idle cycles than needed to blow past the ceiling unclamped.
     for _ in range(40):
-        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+        collector._apply_throttle(_get(db, "quiet"), RunOutcome.NO_WORK)
     assert _get(db, "quiet").collector_interval_seconds == 604800
 
 
@@ -786,7 +727,7 @@ def test_editing_interval_resets_base_and_idle(test_config, tmp_path):
     )
     # Throttle it up first.
     for _ in range(3):
-        collector._apply_throttle(_get(db, "quiet"), _idle_response())
+        collector._apply_throttle(_get(db, "quiet"), RunOutcome.NO_WORK)
     assert _get(db, "quiet").collector_interval_seconds == 7200
 
     db.memories.update_collection_metadata("quiet", collector_interval_seconds=1800)

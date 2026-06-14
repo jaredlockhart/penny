@@ -269,11 +269,14 @@ export interface PromptLogRun {
   total_duration_ms: number;
   total_input_tokens: number;
   total_output_tokens: number;
-  run_success: boolean | null;
+  run_outcome: RunOutcome | null;
   run_reason: string | null;
   run_target: string | null;
   prompts: PromptLogEntry[];
 }
+
+/** First-class outcome of a collector cycle (mirrors penny's RunOutcome). */
+export type RunOutcome = "failed" | "no_work" | "worked" | "cancelled";
 
 export interface WsIncomingPromptLogsPayload {
   type: typeof WsIncomingType.PromptLogsResponse;
@@ -289,7 +292,7 @@ export interface WsIncomingPromptLogUpdatePayload {
 export interface WsIncomingRunOutcomePayload {
   type: typeof WsIncomingType.RunOutcomeUpdate;
   run_id: string;
-  success: boolean;
+  outcome: RunOutcome;
   reason: string;
   target: string | null;
 }
@@ -633,11 +636,11 @@ export interface RuntimePromptLogUpdate {
   prompt: PromptLogEntry & { run_id: string };
 }
 
-/** Background → prompts page: run outcome set (success / reason / target) */
+/** Background → prompts page: run outcome set (outcome / reason / target) */
 export interface RuntimeRunOutcomeUpdate {
   type: typeof RuntimeMessageType.RunOutcomeUpdate;
   run_id: string;
-  success: boolean;
+  outcome: RunOutcome;
   reason: string;
   target: string | null;
 }

@@ -13,6 +13,7 @@ import {
   type MemorySection,
   type PromptLogEntry,
   type PromptLogRun,
+  type RunOutcome,
   type RuntimeCollectionTriggerResult,
   type RuntimeConfigParam,
   type RuntimeMemoryDetailResponse,
@@ -169,7 +170,7 @@ function handleMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.RunOutcomeUpdate) {
     handleRunOutcome(
       message.run_id,
-      message.success,
+      message.outcome,
       message.reason,
       message.target,
     );
@@ -293,7 +294,7 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
     total_duration_ms: prompt.duration_ms,
     total_input_tokens: prompt.input_tokens,
     total_output_tokens: prompt.output_tokens,
-    run_success: null,
+    run_outcome: null,
     run_reason: null,
     run_target: null,
     prompts: [prompt],
@@ -308,13 +309,13 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
 
 function handleRunOutcome(
   runId: string,
-  success: boolean,
+  outcome: RunOutcome,
   reason: string,
   target: string | null,
 ): void {
   const run = allRuns.find((r) => r.run_id === runId);
   if (!run) return;
-  run.run_success = success;
+  run.run_outcome = outcome;
   run.run_reason = reason;
   run.run_target = target;
 
@@ -323,7 +324,7 @@ function handleRunOutcome(
 
   const summary = row.querySelector(".run-summary");
   if (summary) {
-    summary.appendChild(createRunOutcome(success, reason, target));
+    summary.appendChild(createRunOutcome(outcome, reason, target));
   }
 
   // Dismiss spinner — run is complete
@@ -418,9 +419,9 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   const header = createRunHeader(run);
   summary.appendChild(header);
 
-  if (run.run_success !== null || run.run_reason) {
+  if (run.run_outcome !== null || run.run_reason) {
     summary.appendChild(
-      createRunOutcome(run.run_success, run.run_reason ?? "", run.run_target),
+      createRunOutcome(run.run_outcome, run.run_reason ?? "", run.run_target),
     );
   }
 
@@ -440,16 +441,29 @@ function createRunRow(run: PromptLogRun): HTMLElement {
   return row;
 }
 
+const RUN_OUTCOME_CLASS: Record<RunOutcome, string> = {
+  worked: "run-outcome-worked",
+  no_work: "run-outcome-no-work",
+  failed: "run-outcome-failed",
+  cancelled: "run-outcome-cancelled",
+};
+const RUN_OUTCOME_LABEL: Record<RunOutcome, string> = {
+  worked: "worked",
+  no_work: "no work",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+
 function createRunOutcome(
-  success: boolean | null,
+  outcome: RunOutcome | null,
   reason: string,
   target: string | null,
 ): HTMLElement {
   const el = document.createElement("div");
-  el.className = success
-    ? "run-outcome run-outcome-stored"
-    : "run-outcome run-outcome-discarded";
-  el.textContent = target ? `[${target}] ${reason}` : reason;
+  el.className = `run-outcome ${outcome ? RUN_OUTCOME_CLASS[outcome] : "run-outcome-no-work"}`;
+  const label = outcome ? RUN_OUTCOME_LABEL[outcome] : "";
+  const text = reason ? `${label} — ${reason}` : label;
+  el.textContent = target ? `[${target}] ${text}` : text;
   return el;
 }
 
