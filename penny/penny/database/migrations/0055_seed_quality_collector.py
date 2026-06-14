@@ -13,8 +13,9 @@ The collector gates the ``prompt_test`` tool into the surface only for this
 collection's cycles (see ``Collector.get_tools`` / ``MEMORY_QUALITY_COLLECTION``).
 
 Seeded ``inclusion='never'`` (a background supervisor — never surfaces in chat
-recall) at a daily cadence; the auto-throttle backs it off toward weekly on the
-many quiet days and snaps it back when something actually drifts.
+recall) at a 1h base cadence — a plain collector like any other, so the standard
+auto-throttle backs it off toward the weekly cap on quiet cycles and snaps it
+back to 1h when something actually drifts.
 """
 
 from __future__ import annotations
@@ -70,8 +71,8 @@ QUALITY_EXTRACTION_PROMPT = (
     "Never weaken an intent to excuse a prompt."
 )
 
-# Daily; base_interval_seconds is the snap-back target for the auto-throttle.
-_INTERVAL_SECONDS = 86400
+# 1h base cadence; base_interval_seconds is the snap-back target for the throttle.
+_INTERVAL_SECONDS = 3600
 
 
 def up(conn: sqlite3.Connection) -> None:
