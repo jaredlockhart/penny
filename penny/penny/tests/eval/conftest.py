@@ -9,6 +9,7 @@ is the real contract.  See docs/self-improvement-loop.md.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -161,6 +162,26 @@ def collection_entries(db: Database, name: str) -> dict[str, str]:
     }
 
 
+def tool_was_called(db: Database, tool_name: str) -> bool:
+    """Did the model actually invoke ``tool_name`` this run?
+
+    Scans the persisted promptlog responses for a matching tool call — the real
+    record of what the model did, not a harness-side spy.
+    """
+    return any(
+        any(call.get("function", {}).get("name") == tool_name for call in _response_tool_calls(row))
+        for row in db.messages.recent_prompts(limit=200)
+    )
+
+
+def _response_tool_calls(prompt_log) -> list[dict]:
+    response = json.loads(prompt_log.response) if prompt_log.response else {}
+    choices = response.get("choices") or []
+    if not choices:
+        return []
+    return choices[0].get("message", {}).get("tool_calls") or []
+
+
 async def _embed_seeds(penny: Penny) -> None:
     """Vectorize seeded memory so stage-1/2 recall behaves like prod.
 
@@ -269,6 +290,7 @@ def collector_eval(make_config: Callable[..., Config], tmp_path) -> CollectorEva
         seed: Seeder,
         score: CollectorScorer,
         snapshot: Snapshotter | None = None,
+        extra_tools: Callable[[Database], list] | None = None,
         samples: int = SAMPLES,
         min_pass_rate: float = 0.75,
     ) -> None:
@@ -287,6 +309,8 @@ def collector_eval(make_config: Callable[..., Config], tmp_path) -> CollectorEva
                     seed_user(penny.db)
                     seed(penny.db)
                     await _embed_seeds(penny)
+                    if extra_tools is not None:
+                        penny.collector._extra_tools = extra_tools(penny.db)
                     before = snapshot(penny.db) if snapshot is not None else None
                     sent_before = len(server.outgoing_messages)
                     await penny.collector.run_for(collection)

@@ -580,6 +580,15 @@ class MessageStore:
         rows = session.execute(sql, params).all()
         return [row[0] for row in rows if row[0] is not None]
 
+    def recent_prompts(self, limit: int = 200) -> list[PromptLog]:
+        """The most recent prompt-log rows, newest first — for inspection/eval."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(PromptLog).order_by(PromptLog.timestamp.desc()).limit(limit)
+                ).all()
+            )
+
     def prompt_perf(self) -> PromptPerf:
         """Aggregate wall time + token usage across every logged prompt.
 

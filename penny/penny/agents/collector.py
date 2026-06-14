@@ -37,6 +37,7 @@ from penny.database import Database
 from penny.database.memory_store import LogEntryInput
 from penny.database.models import Memory
 from penny.llm.client import LlmClient
+from penny.tools.base import Tool
 from penny.tools.memory_tools import (
     CollectionDeleteEntryTool,
     CollectionMoveTool,
@@ -132,6 +133,15 @@ class Collector(BackgroundAgent):
         # ``_current_target`` is never clobbered by an overlapping run.
         self._current_target: Memory | None = None
         self._cycle_lock = asyncio.Lock()
+        # Extra tools appended to every cycle's surface.  The seam for the
+        # self-correction dry-run tool (``prompt_test``): the quality collector
+        # needs to replay a candidate extraction_prompt before applying it.
+        # Empty in production until that tool is wired; the eval injects a stub
+        # to validate the model can actually drive the find→fix→test→apply loop.
+        self._extra_tools: list[Tool] = []
+
+    def get_tools(self) -> list[Tool]:
+        return [*super().get_tools(), *self._extra_tools]
 
     async def execute(self) -> bool:
         target = self._next_ready_collection()
