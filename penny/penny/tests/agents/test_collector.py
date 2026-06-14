@@ -335,7 +335,7 @@ def test_cycle_result_classifies_worked_no_work_failed():
     no_work = ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(tool="read_latest", arguments={}),
+            ToolCallRecord(tool="collection_read_latest", arguments={}),
             ToolCallRecord(tool="done", arguments={"success": True, "summary": "no new matches"}),
         ],
     )
@@ -646,7 +646,7 @@ def _idle_response() -> ControllerResponse:
     return ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(tool="read_latest", arguments={}, failed=False),
+            ToolCallRecord(tool="collection_read_latest", arguments={}, failed=False),
             ToolCallRecord(tool="done", arguments={}, failed=False),
         ],
     )

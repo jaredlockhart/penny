@@ -23,7 +23,7 @@ from penny.database.memory_store import (
     RecallMode,
 )
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
-from penny.tools.memory_tools import CollectionMetadataTool
+from penny.tools.memory_tools import MemoryMetadataTool
 
 
 def _make_db(tmp_path) -> Database:
@@ -114,7 +114,7 @@ class TestMemoryMetadata:
             collector_interval_seconds=300,
             extraction_prompt="Browse for new board games and write entries.",
         )
-        tool = CollectionMetadataTool(db)
+        tool = MemoryMetadataTool(db)
         result = asyncio.run(tool.execute(memory="board-games"))
         assert "board-games" in result
         assert "collection" in result
@@ -130,7 +130,7 @@ class TestMemoryMetadata:
     def test_collection_metadata_tool_no_extraction_prompt(self, tmp_path):
         db = _make_db(tmp_path)
         db.memories.create_collection("plain", "no collector", Inclusion.NEVER, RecallMode.RECENT)
-        tool = CollectionMetadataTool(db)
+        tool = MemoryMetadataTool(db)
         result = asyncio.run(tool.execute(memory="plain"))
         assert "extraction prompt: none" in result
 
@@ -144,7 +144,7 @@ class TestMemoryMetadata:
 
     def test_collection_metadata_tool_not_found(self, tmp_path):
         db = _make_db(tmp_path)
-        tool = CollectionMetadataTool(db)
+        tool = MemoryMetadataTool(db)
         result = asyncio.run(tool.execute(memory="nonexistent"))
         assert "not found" in result
 

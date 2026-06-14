@@ -23,6 +23,7 @@ from penny.tools.memory_tools import (
     CollectionKeysTool,
     CollectionMergeTool,
     CollectionMoveTool,
+    CollectionReadLatestTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
     CollectionUpdateTool,
@@ -33,7 +34,6 @@ from penny.tools.memory_tools import (
     LogCreateTool,
     LogGetTool,
     LogReadTool,
-    ReadLatestTool,
     ReadSimilarTool,
     TestExtractionPromptTool,
     UpdateEntryTool,
@@ -278,7 +278,7 @@ class TestCollectionWritesAndReads:
             ],
         )
         assert "Wrote 2 entries to 'likes'" in result
-        latest = await ReadLatestTool(db).execute(memory="likes")
+        latest = await CollectionReadLatestTool(db).execute(memory="likes")
         assert "dark roast" in latest
         assert "cold brew" in latest
 
@@ -518,22 +518,19 @@ class TestCollectionMutations:
 
 class TestLogTools:
     @pytest.mark.asyncio
-    async def test_append_and_read_latest(self, tmp_path, mock_llm):
+    async def test_collection_read_latest_refuses_a_log(self, tmp_path, mock_llm):
+        """Collection reads error on a log instead of silently bypassing the
+        cursored log_read/log_get interface (the read_latest-on-a-log footgun)."""
         db = _make_db(tmp_path)
         await LogCreateTool(db, None).execute(
             name="events", description="x", inclusion="always", recall="recent"
         )
-        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
-        await append.execute(memory="events", content="first")
-        await append.execute(memory="events", content="second")
-        rendered = await ReadLatestTool(db).execute(memory="events")
-        # Leads with a count + source header so the model reads the body as
-        # fetched data; entries are numbered newest-first.
-        assert rendered.splitlines() == [
-            "2 entries from `events` (most recent first):",
-            "1. second",
-            "2. first",
-        ]
+        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
+            memory="events", content="first"
+        )
+        rendered = await CollectionReadLatestTool(db).execute(memory="events")
+        assert "Refused" in rendered
+        assert "log_read" in rendered
 
     @pytest.mark.asyncio
     async def test_log_read_window_mode(self, tmp_path, mock_llm):
@@ -1105,11 +1102,11 @@ class TestFactory:
     _FULL_SURFACE = {
         # Reads
         "collection_get",
+        "collection_read_latest",
         "collection_read_random",
         "collection_keys",
-        "collection_metadata",
+        "memory_metadata",
         "log_read",
-        "read_latest",
         "read_similar",
         "exists",
         # Lifecycle (shape)

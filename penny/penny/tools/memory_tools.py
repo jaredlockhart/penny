@@ -30,6 +30,7 @@ from penny.database.memory_store import (
     LogEntryInput,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
+    MemoryType,
     RecallMode,
     WriteResult,
 )
@@ -103,6 +104,30 @@ def _format_entries(
     noun = "entry" if len(entries) == 1 else "entries"
     suffix = f" ({ordering})" if ordering else ""
     return f"{len(entries)} {noun} from `{source}`{suffix}:\n{body}"
+
+
+def _wrong_shape(db: Database, name: str, want: MemoryType) -> str | None:
+    """Error string if ``name`` exists but isn't the shape this read tool serves.
+
+    Reads are shape-specific: ``collection_*`` reads operate only on collections;
+    ``log_read``/``log_get`` only on logs.  A wrong-shape call gets a readable
+    refusal pointing at the right tool instead of silently returning nothing (a
+    log has no keyed entries) or bypassing the cursored log interface (the
+    ``read_latest``-on-a-log footgun).  Missing memories pass through — the
+    underlying call emits its own 'not found'.
+    """
+    memory = db.memories.get(name)
+    if memory is None or memory.type == want:
+        return None
+    if want == MemoryType.COLLECTION:
+        return (
+            f"Refused: '{name}' is a log, not a collection.  Read a log with "
+            f"log_read (recent/cursored batch) or log_get for one entry by id."
+        )
+    return (
+        f"Refused: '{name}' is a collection, not a log.  Read a collection with "
+        f"collection_read_latest / collection_get / collection_read_random / read_similar."
+    )
 
 
 def check_extraction_prompt(prompt: str | None) -> str | None:
@@ -437,19 +462,26 @@ class CollectionGetTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionGetArgs(**kwargs)
+        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
+            return error
         rows = self._db.memories.get_entry(args.memory, args.key)
         if not rows:
             return f"Key '{args.key}' not found in '{args.memory}'."
         return _format_entries(rows, source=args.memory)
 
 
-class ReadLatestTool(Tool):
-    """Return the newest entries in a memory (works for collections and logs)."""
+class CollectionReadLatestTool(Tool):
+    """Return the newest entries in a collection, newest first.
 
-    name = "read_latest"
+    Collection-only: logs are read through the cursored ``log_read`` /
+    ``log_get`` pair, never through a newest-first scan (which would bypass the
+    cursor and silently miss entries).  A log target gets a readable refusal.
+    """
+
+    name = "collection_read_latest"
     description = (
-        "Return the newest entries in a memory, newest first. Works for "
-        "both collections and logs. Omit ``k`` to return every entry."
+        "Return the newest entries in a collection, newest first. Omit ``k`` to "
+        "return every entry. Collections only — to read a log use log_read."
     )
     parameters = {
         "type": "object",
@@ -465,6 +497,8 @@ class ReadLatestTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLatestArgs(**kwargs)
+        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
+            return error
         entries = self._db.memories.read_latest(args.memory, args.k)
         return _format_entries(entries, source=args.memory, ordering="most recent first")
 
@@ -488,6 +522,8 @@ class CollectionReadRandomTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadRandomArgs(**kwargs)
+        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
+            return error
         entries = self._db.memories.read_random(args.memory, args.k)
         return _format_entries(entries, source=args.memory, ordering="random sample")
 
@@ -548,6 +584,8 @@ class CollectionKeysTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
+        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
+            return error
         keys = self._db.memories.keys(args.memory)
         if not keys:
             return "(no keys)"
@@ -728,7 +766,7 @@ class CollectionUpdateTool(Tool):
         "included.\n"
         "- ``extraction_prompt`` — FULL replacement body, not a diff. "
         "Drives what the collector actually does. Read the current body "
-        "via ``collection_metadata`` first if you need to preserve any "
+        "via ``memory_metadata`` first if you need to preserve any "
         "of it.\n"
         "- ``collector_interval_seconds`` — cadence in seconds.\n"
         "\n"
@@ -738,7 +776,7 @@ class CollectionUpdateTool(Tool):
         "\n"
         "For workflow guidance — which field maps to which user intent "
         "(scope change vs cadence change vs silent flip), when to call "
-        "``collection_metadata`` first, when to propose before applying — "
+        "``memory_metadata`` first, when to propose before applying — "
         "see the skills surfaced in your recall context."
     )
     parameters = {
@@ -775,7 +813,7 @@ class CollectionUpdateTool(Tool):
                 "description": (
                     "FULL rewritten body — replaces the whole prompt, not "
                     "a diff. Drives what the collector actually does. Read "
-                    "current body via collection_metadata first for scope "
+                    "current body via memory_metadata first for scope "
                     "or silent-flip changes."
                 ),
             },
@@ -821,10 +859,14 @@ class CollectionUpdateTool(Tool):
         return _format_collection_echo(memory, "Updated")
 
 
-class CollectionMetadataTool(Tool):
-    """Return the metadata fields for a single memory (collection or log)."""
+class MemoryMetadataTool(Tool):
+    """Return the metadata fields for a single memory (collection or log).
 
-    name = "collection_metadata"
+    Genuinely shape-agnostic — metadata describes the memory itself, not its
+    contents — so it's named ``memory_metadata`` and applies to either shape.
+    """
+
+    name = "memory_metadata"
     description = (
         "Return metadata for a memory: description, intent (the user's "
         "original goal), recall mode, collector interval, last collected "
@@ -1075,6 +1117,8 @@ class LogReadTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLogArgs(**kwargs)
+        if error := _wrong_shape(self._db, args.memory, MemoryType.LOG):
+            return error
         entries = (
             self._read_cursor(args.memory) if self._cursor_mode else self._read_window(args.memory)
         )
@@ -1346,11 +1390,13 @@ def build_memory_tools(
       each entry-mutation tool).  Chat passes ``scope=None`` — its
       entry mutations are unrestricted, since edits are user-directed.
 
-    Reads are shape-agnostic (``read_latest`` / ``read_similar``); the
-    parallel ``collection_*`` / ``log_*`` versions were merged earlier
-    since they share the same access-layer call.  ``read_all`` was
-    removed — pagination via ``read_latest(memory, k=N)`` is always
-    safer than dumping a 1,000-entry collection into the prompt.
+    Reads are shape-specific and refuse the wrong shape (``_wrong_shape``):
+    collections via ``collection_read_latest`` / ``collection_get`` /
+    ``collection_read_random`` / ``collection_keys``; logs only via the cursored
+    ``log_read`` / ``log_get`` pair.  ``read_similar`` (embedding search) and
+    ``memory_metadata`` are the genuinely shape-agnostic reads.  Keeping each
+    content read shape-specific is what prevents a newest-first scan from
+    bypassing a log's cursor (the ``read_latest``-on-a-log footgun).
 
     ``DoneTool`` / ``send_message`` are intentionally not here — they're
     loop-control, not capability, added in ``BackgroundAgent.get_tools``.
@@ -1358,12 +1404,12 @@ def build_memory_tools(
     the model may call it instead of producing a reply.
     """
     reads: list[Tool] = [
-        ReadLatestTool(db),
+        CollectionReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
-        CollectionMetadataTool(db),
+        MemoryMetadataTool(db),
         LogReadTool(db, agent_name, scope),
         ExistsTool(db, llm_client),
     ]
