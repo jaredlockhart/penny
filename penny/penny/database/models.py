@@ -24,7 +24,7 @@ class PromptLog(SQLModel, table=True):
     run_id: str | None = None  # Groups all prompts from one agentic loop invocation
     # Run outcome is set on the last prompt of a collector cycle.  All three
     # are NULL for non-collector agents (chat, schedule executor).
-    run_success: bool | None = None
+    run_outcome: str | None = None  # RunOutcome enum: failed | no_work | worked | cancelled
     run_reason: str | None = None  # Free-text reason from done(summary=...)
     run_target: str | None = None  # Collection name the cycle was bound to
 

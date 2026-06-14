@@ -28,6 +28,25 @@ class ValidationReason(StrEnum):
     TOOL_PARSE_ERROR = "tool_parse_error"
 
 
+class RunOutcome(StrEnum):
+    """The first-class outcome of a collector cycle — one determination, stored
+    on ``promptlog.run_outcome`` and surfaced everywhere (UI badge, the
+    ``collector-runs`` log Penny reads, the auto-throttle).  Replaces the old
+    ``run_success`` bool, which couldn't tell a clean no-op from real work.
+
+    ``failed`` (errored / hit max steps / no ``done()``) ·
+    ``no_work`` (completed cleanly, changed nothing) ·
+    ``worked`` (completed and changed something — a write / update / move /
+    delete / message) · ``cancelled`` (preempted by a foreground message — not
+    a failure, not work; the throttle ignores it).
+    """
+
+    FAILED = "failed"
+    NO_WORK = "no_work"
+    WORKED = "worked"
+    CANCELLED = "cancelled"
+
+
 class ProgressEmoji(StrEnum):
     """Emojis used by ProgressTracker implementations to surface in-flight work.
 

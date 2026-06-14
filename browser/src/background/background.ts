@@ -275,7 +275,7 @@ function connect(): void {
       broadcastToSidebar({
         type: RuntimeMessageType.RunOutcomeUpdate,
         run_id: data.run_id,
-        success: data.success,
+        outcome: data.outcome,
         reason: data.reason,
         target: data.target,
       });
