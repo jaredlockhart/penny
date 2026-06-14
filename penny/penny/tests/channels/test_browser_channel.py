@@ -1137,13 +1137,16 @@ class TestBrowserPromptLogHandlers:
         channel = BrowserChannel(host="localhost", port=9999, message_agent=MagicMock(), db=db)
         return channel, db
 
-    def _log_prompt(self, db: Database, agent_name: str, run_id: str) -> None:
+    def _log_prompt(
+        self, db: Database, agent_name: str, run_id: str, run_target: str | None = None
+    ) -> None:
         db.messages.log_prompt(
             model="test-model",
             messages=[{"role": "user", "content": "test"}],
             response={"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
             agent_name=agent_name,
             run_id=run_id,
+            run_target=run_target,
             duration_ms=100,
         )
 
@@ -1254,8 +1257,8 @@ class TestBrowserPromptLogHandlers:
     async def test_prompt_logs_include_run_outcome(self, tmp_path):
         """Run outcome (outcome / reason / target) is included in the response when set."""
         channel, db = self._channel(tmp_path)
-        self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", "worked", "wrote 2 new games", "board-games")
+        self._log_prompt(db, "collector", "run1", run_target="board-games")
+        db.messages.set_run_outcome("run1", "worked", "wrote 2 new games")
 
         response = await self._request_prompt_logs(channel)
         run = response["runs"][0]
@@ -1276,11 +1279,14 @@ class TestBrowserPromptLogHandlers:
         assert run["prompts"][0]["input_tokens"] == 10
 
     def test_set_run_outcome(self, tmp_path):
-        """set_run_outcome stamps outcome / reason / target on the last prompt log for a run."""
+        """set_run_outcome stamps outcome / reason on the last prompt log for a run.
+
+        (run_target is stamped on every prompt at write time, not here — see
+        test_log_prompt_stamps_run_target.)"""
         _, db = self._channel(tmp_path)
         self._log_prompt(db, "collector", "run1")
         self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", "failed", "duplicate of 'test'", "likes")
+        db.messages.set_run_outcome("run1", "failed", "duplicate of 'test'")
 
         with Session(db.engine) as session:
             logs = session.exec(
@@ -1289,24 +1295,36 @@ class TestBrowserPromptLogHandlers:
 
         assert logs[0].run_outcome is None
         assert logs[0].run_reason is None
-        assert logs[0].run_target is None
         assert logs[1].run_outcome == "failed"
         assert logs[1].run_reason == "duplicate of 'test'"
-        assert logs[1].run_target == "likes"
+
+    def test_log_prompt_stamps_run_target(self, tmp_path):
+        """run_target is written on the prompt row at log time (every prompt),
+        so a run is attributable to its collection from its first prompt."""
+        _, db = self._channel(tmp_path)
+        self._log_prompt(db, "collector", "run1", run_target="board-games")
+
+        with Session(db.engine) as session:
+            log = session.exec(
+                select(PromptLog).where(PromptLog.run_id == "run1")  # ty: ignore[invalid-argument-type]
+            ).first()
+
+        assert log is not None
+        assert log.run_target == "board-games"
 
     def test_on_run_outcome_set_callback(self, tmp_path):
         """_on_run_outcome_set callback fires with the structured outcome when set."""
         _, db = self._channel(tmp_path)
-        received: list[tuple[str, str, str, str | None]] = []
-        db.messages._on_run_outcome_set = lambda run_id, outcome, reason, target: received.append(
-            (run_id, outcome, reason, target)
+        received: list[tuple[str, str, str]] = []
+        db.messages._on_run_outcome_set = lambda run_id, outcome, reason: received.append(
+            (run_id, outcome, reason)
         )
 
         self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", "worked", "wrote 2 new games", "board-games")
+        db.messages.set_run_outcome("run1", "worked", "wrote 2 new games")
 
         assert len(received) == 1
-        assert received[0] == ("run1", "worked", "wrote 2 new games", "board-games")
+        assert received[0] == ("run1", "worked", "wrote 2 new games")
 
     def test_on_prompt_logged_callback(self, tmp_path):
         """_on_prompt_logged callback fires with prompt data for prompts with run_id."""

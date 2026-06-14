@@ -84,6 +84,7 @@ class LlmClient:
         agent_name: str | None = None,
         prompt_type: str | None = None,
         run_id: str | None = None,
+        run_target: str | None = None,
     ) -> LlmResponse:
         """Generate a chat completion with optional tool calling."""
         last_error: Exception | None = None
@@ -112,6 +113,7 @@ class LlmClient:
                     agent_name,
                     prompt_type,
                     run_id,
+                    run_target,
                 )
 
                 return response
@@ -404,6 +406,7 @@ class LlmClient:
         agent_name: str | None,
         prompt_type: str | None,
         run_id: str | None,
+        run_target: str | None,
     ) -> None:
         """Log prompt exchange to database if available."""
         if not self.db:
@@ -418,6 +421,7 @@ class LlmClient:
             agent_name=agent_name,
             prompt_type=prompt_type,
             run_id=run_id,
+            run_target=run_target,
         )
 
 

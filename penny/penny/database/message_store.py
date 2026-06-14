@@ -48,7 +48,7 @@ class MessageStore:
     def __init__(self, engine):
         self.engine = engine
         self._on_prompt_logged: Callable[[dict], None] | None = None
-        self._on_run_outcome_set: Callable[[str, str, str, str | None], None] | None = None
+        self._on_run_outcome_set: Callable[[str, str, str], None] | None = None
 
     def _session(self) -> Session:
         return Session(self.engine)
@@ -118,6 +118,7 @@ class MessageStore:
         agent_name: str | None = None,
         prompt_type: str | None = None,
         run_id: str | None = None,
+        run_target: str | None = None,
     ) -> None:
         """Log a prompt/response exchange with Ollama."""
         try:
@@ -132,6 +133,7 @@ class MessageStore:
                     agent_name=agent_name,
                     prompt_type=prompt_type,
                     run_id=run_id,
+                    run_target=run_target,
                 )
                 session.add(log)
                 session.commit()
@@ -150,6 +152,7 @@ class MessageStore:
                             "input_tokens": input_tokens,
                             "output_tokens": output_tokens,
                             "run_id": run_id,
+                            "run_target": run_target,
                             "messages": messages,
                             "response": response,
                             "thinking": thinking or "",
@@ -457,12 +460,11 @@ class MessageStore:
         run_id: str,
         outcome: str,
         reason: str,
-        target: str | None = None,
     ) -> None:
-        """Set the run outcome (a ``RunOutcome`` value / reason / target) on the
-        last prompt log row for ``run_id``.  Drives the outcome badge on the
-        prompts tab.  ``target`` is the collection name for collector cycles,
-        None for other agents."""
+        """Set the run outcome (a ``RunOutcome`` value + reason) on the last
+        prompt log row for ``run_id``.  Drives the outcome badge on the prompts
+        tab.  The run's ``run_target`` is stamped on every prompt at write time
+        (see ``log_prompt``), so it isn't set here."""
         try:
             with self._session() as session:
                 last_prompt = session.exec(
@@ -474,11 +476,10 @@ class MessageStore:
                 if last_prompt:
                     last_prompt.run_outcome = outcome
                     last_prompt.run_reason = reason
-                    last_prompt.run_target = target
                     session.add(last_prompt)
                     session.commit()
                     if self._on_run_outcome_set:
-                        self._on_run_outcome_set(run_id, outcome, reason, target)
+                        self._on_run_outcome_set(run_id, outcome, reason)
         except Exception as e:
             logger.error("Failed to set run outcome for %s: %s", run_id, e)
 
@@ -641,6 +642,7 @@ class MessageStore:
                     "duration_ms": p.duration_ms or 0,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "run_target": p.run_target,
                     "messages": json.loads(p.messages) if p.messages else [],
                     "response": response,
                     "thinking": p.thinking or "",

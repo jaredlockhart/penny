@@ -609,6 +609,10 @@ class Agent:
                 agent_name=self.name,
                 prompt_type=prompt_type,
                 run_id=run_id,
+                # The bound collection (collectors) / None (chat, schedule) is
+                # known from the first prompt — stamp it on every row so the run
+                # is identifiable at write time, not retroactively at cycle end.
+                run_target=self._memory_scope(),
             )
         except LlmToolParseError:
             raise
