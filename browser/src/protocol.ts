@@ -254,6 +254,9 @@ export interface PromptLogEntry {
   duration_ms: number;
   input_tokens: number;
   output_tokens: number;
+  // The bound collection (collector cycles) / null (chat, schedule), stamped at
+  // write time so a live run is labelled from its first prompt.
+  run_target: string | null;
   messages: Record<string, unknown>[];
   response: Record<string, unknown>;
   thinking: string;

@@ -118,6 +118,7 @@ class MessageStore:
         agent_name: str | None = None,
         prompt_type: str | None = None,
         run_id: str | None = None,
+        run_target: str | None = None,
     ) -> None:
         """Log a prompt/response exchange with Ollama."""
         try:
@@ -132,6 +133,7 @@ class MessageStore:
                     agent_name=agent_name,
                     prompt_type=prompt_type,
                     run_id=run_id,
+                    run_target=run_target,
                 )
                 session.add(log)
                 session.commit()
@@ -150,6 +152,7 @@ class MessageStore:
                             "input_tokens": input_tokens,
                             "output_tokens": output_tokens,
                             "run_id": run_id,
+                            "run_target": run_target,
                             "messages": messages,
                             "response": response,
                             "thinking": thinking or "",
@@ -641,6 +644,7 @@ class MessageStore:
                     "duration_ms": p.duration_ms or 0,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "run_target": p.run_target,
                     "messages": json.loads(p.messages) if p.messages else [],
                     "response": response,
                     "thinking": p.thinking or "",

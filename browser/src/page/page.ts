@@ -296,7 +296,7 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
     total_output_tokens: prompt.output_tokens,
     run_outcome: null,
     run_reason: null,
-    run_target: null,
+    run_target: prompt.run_target ?? null,
     prompts: [prompt],
   };
   allRuns.unshift(run);
