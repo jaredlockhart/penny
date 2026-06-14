@@ -77,7 +77,7 @@ def _score_update_scope(db: Database, before: set[str], *, added: tuple[str, ...
     return []
 
 
-def _score_silent_flip(db: Database, before: set[str]) -> list[str]:
+def _score_silent_flip(db: Database, before: set[str], reply: str) -> list[str]:
     memory = db.memories.get("board-games")
     if memory is None:
         return ["board-games disappeared"]
@@ -90,14 +90,14 @@ def _score_silent_flip(db: Database, before: set[str]) -> list[str]:
     return [] if silenced else ["still notifying — inclusion not 'never' and notify step kept"]
 
 
-def _score_archive(db: Database, before: set[str]) -> list[str]:
+def _score_archive(db: Database, before: set[str], reply: str) -> list[str]:
     memory = db.memories.get("board-games")
     if memory is None:
         return ["board-games disappeared"]
     return [] if memory.archived else ["collection not archived"]
 
 
-def _score_no_create(db: Database, before: set[str]) -> list[str]:
+def _score_no_create(db: Database, before: set[str], reply: str) -> list[str]:
     created = new_collections(db, before)
     if created:
         return [f"created a collection on an ambiguous request: {[m.name for m in created]}"]
@@ -112,7 +112,7 @@ async def test_create_notify(chat_eval: ChatEval) -> None:
         case_id="create-notify",
         message="research heavier euro-style strategy board games for me, "
         "ping me when you find good ones",
-        score=lambda db, before: _score_create(
+        score=lambda db, before, reply: _score_create(
             db, before, inclusion="relevant", send_message=True, interval=None
         ),
     )
@@ -122,7 +122,7 @@ async def test_create_silent(chat_eval: ChatEval) -> None:
     await chat_eval(
         case_id="create-silent",
         message="research fountain pens and inks for me — silent, i'll check the list myself",
-        score=lambda db, before: _score_create(
+        score=lambda db, before, reply: _score_create(
             db, before, inclusion="never", send_message=False, interval=None
         ),
     )
@@ -132,7 +132,7 @@ async def test_create_cadence(chat_eval: ChatEval) -> None:
     await chat_eval(
         case_id="create-cadence",
         message="research new sci-fi novels for me, check daily, ping me when good ones land",
-        score=lambda db, before: _score_create(
+        score=lambda db, before, reply: _score_create(
             db, before, inclusion="relevant", send_message=True, interval=86400
         ),
     )
@@ -143,7 +143,7 @@ async def test_update_add_scope(chat_eval: ChatEval) -> None:
         case_id="update-add-scope",
         message="add solo and co-op board games to the board games collection too",
         seed=_seed_board_games,
-        score=lambda db, before: _score_update_scope(
+        score=lambda db, before, reply: _score_update_scope(
             db, before, added=("solo", "co-op", "cooperative")
         ),
     )

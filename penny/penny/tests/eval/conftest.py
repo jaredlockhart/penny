@@ -32,10 +32,14 @@ SAMPLES = int(os.environ.get("EVAL_SAMPLES", "5"))
 # Embedding backfill batch size for seeded memory.
 _EMBED_BATCH = 100
 
-# A scorer reads persisted DB state (+ the pre-run collection names) and returns
-# a list of failure strings — empty means the sample passed.
-Scorer = Callable[[Database, set[str]], list[str]]
+# A chat scorer reads persisted DB state (the pre-run collection names + the
+# final reply text) and returns failure strings — empty means the sample passed.
+Scorer = Callable[[Database, set[str], str], list[str]]
 Seeder = Callable[[Database], None]
+# A collector scorer also sees the pre-cycle snapshot and the messages the cycle
+# sent the user.  ``snapshot`` is whatever the case's ``snapshot`` callback returned.
+Snapshotter = Callable[[Database], object]
+CollectorScorer = Callable[[Database, object, list[str]], list[str]]
 
 
 @dataclass
@@ -114,6 +118,14 @@ def new_collections(db: Database, before: set[str]) -> list[Memory]:
     return [memory for memory in db.memories.list_all() if memory.name not in before]
 
 
+def collection_entries(db: Database, name: str) -> dict[str, str]:
+    """``{key: content}`` for every keyed entry in a collection — a snapshot a
+    collector scorer compares before/after a cycle to detect writes/edits/deletes."""
+    return {
+        entry.key: entry.content for entry in db.memories.read_all(name) if entry.key is not None
+    }
+
+
 async def _embed_seeds(penny: Penny) -> None:
     """Vectorize seeded memory so stage-1/2 recall behaves like prod.
 
@@ -185,14 +197,116 @@ def chat_eval(make_config: Callable[..., Config], tmp_path) -> ChatEval:
                     before = collection_names(penny.db)
                     try:
                         await server.push_message(sender=TEST_SENDER, content=message)
-                        await server.wait_for_message(timeout=timeout)
+                        response = await server.wait_for_message(timeout=timeout)
                     except TimeoutError:
                         results.append(SampleResult(False, ["no reply within timeout"]))
                         continue
-                    fails = score(penny.db, before)
+                    reply = str(response.get("message", ""))
+                    fails = score(penny.db, before, reply)
                     results.append(SampleResult(not fails, fails))
             finally:
                 await server.stop()
         _assert_threshold(case_id, results, min_pass_rate)
+
+    return _run
+
+
+# A collector-eval runner: (case_id, collection, seed, score, snapshot) -> asserts.
+CollectorEval = Callable[..., Awaitable[None]]
+
+
+@pytest.fixture
+def collector_eval(make_config: Callable[..., Config], tmp_path) -> CollectorEval:
+    """Drive a real collector cycle (``run_for``) N times for one collection.
+
+    Each sample is hermetic.  Seeds run first (the collection under test + any
+    input logs/entries), embeddings backfill, then ``run_for`` executes the real
+    cycle against the real model.  The scorer reads persisted state, the pre-cycle
+    snapshot, and any messages the cycle sent the user (captured off the server).
+    """
+
+    async def _run(
+        *,
+        case_id: str,
+        collection: str,
+        seed: Seeder,
+        score: CollectorScorer,
+        snapshot: Snapshotter | None = None,
+        samples: int = SAMPLES,
+        min_pass_rate: float = 0.75,
+    ) -> None:
+        results: list[SampleResult] = []
+        for sample_index in range(samples):
+            server = MockSignalServer()
+            await server.start()
+            try:
+                config = _real_model_config(
+                    make_config,
+                    signal_api_url=f"http://localhost:{server.port}",
+                    db_path=str(tmp_path / f"{case_id}-{sample_index}.db"),
+                )
+                async with run_penny_with_server(config, server) as penny:
+                    seed_user(penny.db)
+                    seed(penny.db)
+                    await _embed_seeds(penny)
+                    before = snapshot(penny.db) if snapshot is not None else None
+                    sent_before = len(server.outgoing_messages)
+                    await penny.collector.run_for(collection)
+                    sent = [
+                        str(message.get("message", ""))
+                        for message in server.outgoing_messages[sent_before:]
+                    ]
+                    fails = score(penny.db, before, sent)
+                    results.append(SampleResult(not fails, fails))
+            finally:
+                await server.stop()
+        _assert_threshold(case_id, results, min_pass_rate)
+
+    return _run
+
+
+# A recall-eval runner: (seed, check) over a single deterministic pass.
+RecallEval = Callable[..., Awaitable[None]]
+
+
+@pytest.fixture
+def recall_eval(make_config: Callable[..., Config], tmp_path) -> RecallEval:
+    """Drive the REAL two-stage recall path once and check routing per message.
+
+    Embeddings are deterministic, so this is a single pass (no sampling): build
+    one real-model Penny, seed the collections, backfill embeddings, then for
+    each message render ``ChatAgent._recall_section`` and run ``check`` against
+    the rendered block.  ``check(recall_block, message) -> list[str]`` failures
+    are aggregated and asserted to be empty.
+    """
+
+    async def _run(
+        *, case_id: str, seed: Seeder, messages, check, min_pass_rate: float = 0.75
+    ) -> None:
+        server = MockSignalServer()
+        await server.start()
+        try:
+            config = _real_model_config(
+                make_config,
+                signal_api_url=f"http://localhost:{server.port}",
+                db_path=str(tmp_path / f"{case_id}.db"),
+            )
+            async with run_penny_with_server(config, server) as penny:
+                seed_user(penny.db)
+                seed(penny.db)
+                await _embed_seeds(penny)
+                limit = int(penny.config.runtime.RECALL_LIMIT)
+                results: list[SampleResult] = []
+                for message in messages:
+                    recall_block = await penny.chat_agent._recall_section(
+                        current_message=message.text,
+                        conversation_history=list(message.history),
+                        limit=limit,
+                    )
+                    fails = check(recall_block or "", message)
+                    results.append(SampleResult(not fails, fails))
+                _assert_threshold(case_id, results, min_pass_rate)
+        finally:
+            await server.stop()
 
     return _run

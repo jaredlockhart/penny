@@ -1,7 +1,10 @@
 # Self-Improvement Loop — Goals, Eval, and Dry-Run
 
-> **Status:** design + phased implementation. Phase 1 (the eval isolation core)
-> is the first deliverable; phases 2–3 (dry-run sandbox + model tool) follow.
+> **Status:** Phase 1 is **done** — the eval isolation core lives in
+> `penny/penny/tests/eval/`, all suites are migrated onto the real agents, and
+> the old `scripts/prompt_validation/` harness is removed. Phases 2–3 (dry-run
+> sandbox + model tool) follow. The "drift problem" section below is written in
+> the present tense for the record — it describes what the migration eliminated.
 
 ## The north star
 
