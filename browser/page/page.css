@@ -1702,3 +1702,90 @@ h1 {
 #toast.visible {
   opacity: 1;
 }
+
+/* --- Search rows (Prompts + Memories tabs) --- */
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  color: var(--text-muted);
+}
+.search-row input {
+  flex: 1;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.search-row input:focus {
+  border-color: var(--text-secondary);
+}
+
+/* --- Read-cursor controls in a collection's detail view --- */
+.memory-cursor-hint {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.memory-cursor-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+}
+.memory-cursor-log {
+  font-weight: 600;
+  font-size: 13px;
+}
+.memory-cursor-current {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.memory-cursor-row input {
+  width: auto;
+  flex: 1;
+  min-width: 180px;
+}
+
+/* --- "Showing matches for X" banner above any filtered list --- */
+.search-banner {
+  padding: 6px 10px;
+  margin: 4px 0 8px;
+  border-left: 3px solid var(--text-secondary);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+/* --- Custom clear (✕) for search inputs (Firefox shows no native one) --- */
+.search-row {
+  position: relative;
+}
+.search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  font-size: 13px;
+}
+.search-clear.visible {
+  display: inline-flex;
+}
+.search-clear:hover {
+  color: var(--text-primary);
+}

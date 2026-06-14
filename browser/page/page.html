@@ -29,6 +29,11 @@
       <button class="sub-tab" data-agent="chat"><i class="fa-solid fa-comment"></i> Chat</button>
       <button class="sub-tab" data-agent="history"><i class="fa-solid fa-clock-rotate-left"></i> History</button>
     </div>
+    <div class="search-row">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="search" id="prompts-search" placeholder="Search prompt text…">
+      <button type="button" class="search-clear" id="prompts-search-clear" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
+    </div>
     <div id="prompts-loading" class="panel-loading">Loading prompt logs...</div>
     <div id="runs"></div>
     <div id="prompts-load-more" class="hidden">
@@ -42,6 +47,11 @@
       <button class="sub-tab active" data-mtab="collections"><i class="fa-solid fa-database"></i> Collections</button>
       <button class="sub-tab" data-mtab="logs"><i class="fa-solid fa-list"></i> Logs</button>
       <button class="sub-tab" data-mtab="archived"><i class="fa-solid fa-box-archive"></i> Archived</button>
+    </div>
+    <div class="search-row">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="search" id="memories-search" placeholder="Search name, intent, or entries…">
+      <button type="button" class="search-clear" id="memories-search-clear" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div id="memories-loading" class="panel-loading">Loading memories...</div>
     <div id="memories-list"></div>

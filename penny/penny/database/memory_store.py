@@ -344,12 +344,17 @@ class MemoryStore:
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
         description_embedding: list[float] | None = None,
+        intent: str | None = None,
     ) -> Memory:
         """Update fields on an existing collection.  Only set fields are applied.
 
         When ``description`` changes the caller passes the freshly computed
         ``description_embedding`` alongside it so the stage-1 anchor stays in
         sync — the two always move together.
+
+        ``intent`` is editable here (the user-authored update path) even though
+        it is NOT a field on the ``collection_update`` tool: the user owns the
+        spec, the agent cannot rewrite it.
         """
         name = _slug(name)
         self._require_type(name, MemoryType.COLLECTION)
@@ -369,6 +374,8 @@ class MemoryStore:
                 memory.extraction_prompt = extraction_prompt
             if collector_interval_seconds is not None:
                 memory.collector_interval_seconds = collector_interval_seconds
+            if intent is not None:
+                memory.intent = intent
             memory.updated_at = datetime.now(UTC)
             session.add(memory)
             session.commit()
@@ -627,10 +634,15 @@ class MemoryStore:
         with self._session() as session:
             return self._entries_by_key(session, _slug(name), key)
 
-    def read_latest(self, name: str, k: int | None = None, offset: int = 0) -> list[MemoryEntry]:
+    def read_latest(
+        self, name: str, k: int | None = None, offset: int = 0, search: str | None = None
+    ) -> list[MemoryEntry]:
         """Return entries newest-first. With `k=None`, returns every entry.
         `offset` skips the newest `offset` entries — paginate by passing a
-        page size as `k` and advancing `offset` by `k` per page."""
+        page size as `k` and advancing `offset` by `k` per page.  `search`
+        keeps only entries whose `key` or `content` contains the text (a
+        substring LIKE) — used by the addon to filter a collection's entries
+        to a search term."""
         name = _slug(name)
         with self._session() as session:
             query = (
@@ -638,6 +650,12 @@ class MemoryStore:
                 .where(MemoryEntry.memory_name == name)
                 .order_by(MemoryEntry.created_at.desc())  # type: ignore[union-attr]
             )
+            if search:
+                like = f"%{search}%"
+                query = query.where(
+                    MemoryEntry.content.like(like)  # ty: ignore[unresolved-attribute]
+                    | MemoryEntry.key.like(like)  # ty: ignore[unresolved-attribute]
+                )
             if k is not None:
                 query = query.limit(k)
             if offset:
@@ -669,6 +687,22 @@ class MemoryStore:
             if offset:
                 query = query.offset(offset)
             return list(session.exec(query).all())
+
+    def names_with_entry_match(self, search: str) -> set[str]:
+        """Names of memories holding an entry whose ``key`` or ``content``
+        contains ``search`` — powers the addon's "search entries too" filter
+        on the Memories list (a substring LIKE; on-demand, so not indexed)."""
+        like = f"%{search}%"
+        with self._session() as session:
+            rows = session.exec(
+                select(MemoryEntry.memory_name)
+                .where(
+                    MemoryEntry.content.like(like)  # ty: ignore[unresolved-attribute]
+                    | MemoryEntry.key.like(like)  # ty: ignore[unresolved-attribute]
+                )
+                .distinct()
+            ).all()
+            return set(rows)
 
     def read_recent(
         self, name: str, window_seconds: int, cap: int | None = None

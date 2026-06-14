@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1184,6 +1185,43 @@ class TestBrowserPromptLogHandlers:
         assert response["runs"][0]["agent_name"] == "chat"
 
     @pytest.mark.asyncio
+    async def test_prompt_logs_query_matches_output_not_input(self, tmp_path):
+        """A text query matches a run's response/thinking (what it produced),
+        not its input messages (shared scaffolding that would match noise)."""
+        channel, db = self._channel(tmp_path)
+        db.messages.log_prompt(
+            model="m",
+            messages=[{"role": "user", "content": "q"}],
+            response={"choices": [{"message": {"content": "here is info on basketball"}}]},
+            agent_name="chat",
+            run_id="hoops",
+            duration_ms=1,
+        )
+        db.messages.log_prompt(
+            model="m",
+            messages=[{"role": "user", "content": "q"}],
+            response={"choices": [{"message": {"content": "here is info on gardening"}}]},
+            agent_name="chat",
+            run_id="plants",
+            duration_ms=1,
+        )
+        # "reuters" only in the INPUT — must NOT match (this is the noise we cut).
+        db.messages.log_prompt(
+            model="m",
+            messages=[{"role": "user", "content": "what did reuters say"}],
+            response={"choices": [{"message": {"content": "no idea"}}]},
+            agent_name="chat",
+            run_id="noise",
+            duration_ms=1,
+        )
+
+        response = await self._request_prompt_logs(channel, {"query": "basketball"})
+        assert {r["run_id"] for r in response["runs"]} == {"hoops"}
+
+        response = await self._request_prompt_logs(channel, {"query": "reuters"})
+        assert response["runs"] == []
+
+    @pytest.mark.asyncio
     async def test_prompt_logs_pagination(self, tmp_path):
         """Offset skips earlier runs."""
         channel, db = self._channel(tmp_path)
@@ -1342,7 +1380,7 @@ class TestBrowserMemoryHandlers:
         self._seed_memories(db)
 
         ws = _MockWs()
-        await channel._handle_memories_request(ws)  # ty: ignore[invalid-argument-type]
+        await channel._handle_memories_request(ws, {"type": "memories_request"})  # ty: ignore[invalid-argument-type]
 
         assert len(ws.sent) == 1
         resp = ws.sent[0]
@@ -1356,6 +1394,60 @@ class TestBrowserMemoryHandlers:
         assert by_name["collector-runs"]["type"] == "log"
         assert by_name["collector-runs"]["entry_count"] == 1
         assert by_name["collector-runs"]["extraction_prompt"] is None
+
+    @pytest.mark.asyncio
+    async def test_memories_request_query_matches_name_or_entry_content(self, tmp_path):
+        """The query keeps memories matching by metadata OR by entry content —
+        so searching an item inside a collection surfaces that collection."""
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection(
+            "board-games", "tabletop strategy", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
+        db.memories.create_collection(
+            "espresso-gear", "coffee equipment", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
+        db.memories.write(
+            "espresso-gear",
+            [EntryInput(key="grinder", content="Niche Zero burr grinder")],
+            author="test",
+        )
+
+        ws = _MockWs()
+        await channel._handle_memories_request(ws, {"query": "board"})  # ty: ignore[invalid-argument-type]
+        names = {m["name"] for m in ws.sent[0]["memories"]}
+        assert "board-games" in names  # matched by name
+        assert "espresso-gear" not in names  # no "board" anywhere
+
+        # "niche" appears only in an espresso-gear entry, not its metadata.
+        ws = _MockWs()
+        await channel._handle_memories_request(ws, {"query": "niche"})  # ty: ignore[invalid-argument-type]
+        names = {m["name"] for m in ws.sent[0]["memories"]}
+        assert "espresso-gear" in names
+        assert "board-games" not in names
+
+    @pytest.mark.asyncio
+    async def test_memory_detail_query_filters_entries(self, tmp_path):
+        """Drilling into a collection while a search is active filters its
+        entries section to matches — but metadata keeps the full count."""
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection(
+            "espresso-gear", "coffee", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
+        db.memories.write(
+            "espresso-gear",
+            [
+                EntryInput(key="grinder", content="Niche Zero burr grinder"),
+                EntryInput(key="machine", content="Gaggia Classic espresso machine"),
+            ],
+            author="test",
+        )
+
+        ws = _MockWs()
+        data = {"type": "memory_detail_request", "name": "espresso-gear", "query": "niche"}
+        await channel._handle_memory_detail_request(ws, data)  # ty: ignore[invalid-argument-type]
+        resp = ws.sent[0]
+        assert {e["key"] for e in resp["entries"]} == {"grinder"}
+        assert resp["memory"]["entry_count"] == 2  # full count, not the filtered subset
 
     @pytest.mark.asyncio
     async def test_memory_detail_request_returns_entries_newest_first(self, tmp_path):
@@ -1660,6 +1752,7 @@ class TestBrowserMemoryHandlers:
             RecallMode.RECENT,
             extraction_prompt="old prompt",
             collector_interval_seconds=300,
+            intent="track heavy euro strategy games",
         )
         asyncio.run(
             channel._handle_memory_update(
@@ -1667,6 +1760,9 @@ class TestBrowserMemoryHandlers:
                     "type": "memory_update",
                     "name": "board-games",
                     "description": "new description",
+                    # intent is user-editable via this path (unlike the agent's
+                    # collection_update tool, which has no intent field).
+                    "intent": "track only co-op games now",
                     "recall": None,
                     "extraction_prompt": None,
                     "collector_interval_seconds": None,
@@ -1676,6 +1772,7 @@ class TestBrowserMemoryHandlers:
         memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.description == "new description"
+        assert memory.intent == "track only co-op games now"
         assert memory.recall == "recent"
         assert memory.extraction_prompt == "old prompt"
         assert memory.collector_interval_seconds == 300
@@ -1688,6 +1785,29 @@ class TestBrowserMemoryHandlers:
         memory = db.memories.get("board-games")
         assert memory is not None
         assert memory.archived is True
+
+    def test_cursor_set_then_clear(self, tmp_path):
+        """The addon can move a collection's read cursor over a log to a chosen
+        point (a backward-capable user override) and clear it back to unset."""
+        channel, db = self._channel(tmp_path)
+        db.memories.create_collection("journal", "x", Inclusion.NEVER, RecallMode.RECENT)
+        target = datetime(2026, 3, 1, tzinfo=UTC)
+        channel._handle_cursor_set(
+            {
+                "type": "cursor_set",
+                "name": "journal",
+                "log_name": "user-messages",
+                "last_read_at": target.isoformat(),
+            }
+        )
+        assert db.cursors.get("journal", "user-messages") == target
+        # list_for powers the detail view's cursor rows.
+        assert db.cursors.list_for("journal") == [("user-messages", target)]
+
+        channel._handle_cursor_clear(
+            {"type": "cursor_clear", "name": "journal", "log_name": "user-messages"}
+        )
+        assert db.cursors.get("journal", "user-messages") is None
 
     def test_entry_create_writes_with_user_author(self, tmp_path):
         """Manual entries land with author=``user`` — distinguishes addon-

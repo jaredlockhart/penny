@@ -47,7 +47,9 @@ export type WsOutgoingType =
   | "entry_create"
   | "entry_update"
   | "entry_delete"
-  | "collection_trigger";
+  | "collection_trigger"
+  | "cursor_set"
+  | "cursor_clear";
 export const WsOutgoingType = {
   Message: "message",
   ToolResponse: "tool_response",
@@ -74,6 +76,8 @@ export const WsOutgoingType = {
   EntryUpdate: "entry_update",
   EntryDelete: "entry_delete",
   CollectionTrigger: "collection_trigger",
+  CursorSet: "cursor_set",
+  CursorClear: "cursor_clear",
 } as const satisfies Record<string, WsOutgoingType>;
 
 export interface WsOutgoingMessage {
@@ -294,6 +298,9 @@ export interface MemoryRecord {
   name: string;
   type: "collection" | "log";
   description: string;
+  /** The user's stated goal at creation — editable only via the user (UI)
+   * path, never by the agent's collection_update tool. */
+  intent: string | null;
   /** Stage-1 routing: does this memory participate in recall at all. */
   inclusion: "always" | "relevant" | "never";
   /** Stage-2 entry rendering once included. */
@@ -303,6 +310,13 @@ export interface MemoryRecord {
   collector_interval_seconds: number | null;
   last_collected_at: string | null;
   entry_count: number;
+}
+
+/** One read-cursor a collection holds over a log it reads. */
+export interface CursorRecord {
+  log_name: string;
+  /** ISO-8601 UTC high-water mark of what the collection has read. */
+  last_read_at: string;
 }
 
 export interface MemoryEntryRecord {
@@ -328,6 +342,7 @@ export interface WsIncomingMemoryDetailPayload {
   entries_has_more: boolean;
   collector_runs: MemoryEntryRecord[];
   collector_runs_has_more: boolean;
+  cursors: CursorRecord[];
 }
 
 export interface WsIncomingMemoryPagePayload {
@@ -411,7 +426,9 @@ export type RuntimeMessageType =
   | "entry_update"
   | "entry_delete"
   | "collection_trigger"
-  | "collection_trigger_result";
+  | "collection_trigger_result"
+  | "cursor_set"
+  | "cursor_clear";
 
 export const RuntimeMessageType = {
   SendChat: "send_chat",
@@ -454,6 +471,8 @@ export const RuntimeMessageType = {
   EntryDelete: "entry_delete",
   CollectionTrigger: "collection_trigger",
   CollectionTriggerResult: "collection_trigger_result",
+  CursorSet: "cursor_set",
+  CursorClear: "cursor_clear",
 } as const satisfies Record<string, RuntimeMessageType>;
 
 /** Sidebar → background: user typed a chat message */
@@ -597,6 +616,8 @@ export interface RuntimePromptLogsRequest {
   type: typeof RuntimeMessageType.PromptLogsRequest;
   agent_name?: string;
   offset?: number;
+  /** Substring filter over each run's sent messages / response / thinking. */
+  query?: string;
 }
 
 /** Background → prompts page: prompt logs data */
@@ -624,6 +645,8 @@ export interface RuntimeRunOutcomeUpdate {
 /** Memories tab → background: request the memories list */
 export interface RuntimeMemoriesRequest {
   type: typeof RuntimeMessageType.MemoriesRequest;
+  /** Filter by name / description / intent or matching entry content. */
+  query?: string;
 }
 
 /** Background → memories tab: memories list */
@@ -636,6 +659,8 @@ export interface RuntimeMemoriesResponse {
 export interface RuntimeMemoryDetailRequest {
   type: typeof RuntimeMessageType.MemoryDetailRequest;
   name: string;
+  /** Active list search — filters the entries section to matching entries. */
+  query?: string;
 }
 
 /** Background → memories tab: drill-in payload (metadata + first page of
@@ -649,6 +674,8 @@ export interface RuntimeMemoryDetailResponse {
   entries_has_more: boolean;
   collector_runs: MemoryEntryRecord[];
   collector_runs_has_more: boolean;
+  /** Read positions over the logs this collection reads (empty for logs). */
+  cursors: CursorRecord[];
 }
 
 /** Memories tab → background: load one more page of a detail section */
@@ -657,6 +684,8 @@ export interface RuntimeMemoryPageRequest {
   name: string;
   section: MemorySection;
   offset: number;
+  /** Active list search — keeps entry pagination filtered to matches. */
+  query?: string;
 }
 
 /** Background → memories tab: one more page of a detail section */
@@ -693,7 +722,9 @@ export interface RuntimeMemoryCreate {
   type: typeof RuntimeMessageType.MemoryCreate;
   name: string;
   description: string;
-  recall: "off" | "recent" | "relevant" | "all";
+  intent: string;
+  inclusion: "always" | "relevant" | "never";
+  recall: "recent" | "relevant" | "all";
   extraction_prompt?: string | null;
   collector_interval_seconds?: number | null;
 }
@@ -703,9 +734,27 @@ export interface RuntimeMemoryUpdate {
   type: typeof RuntimeMessageType.MemoryUpdate;
   name: string;
   description?: string | null;
-  recall?: "off" | "recent" | "relevant" | "all" | null;
+  intent?: string | null;
+  inclusion?: "always" | "relevant" | "never" | null;
+  recall?: "recent" | "relevant" | "all" | null;
   extraction_prompt?: string | null;
   collector_interval_seconds?: number | null;
+}
+
+/** Memories tab → background: set a collection's read cursor over one log */
+export interface RuntimeCursorSet {
+  type: typeof RuntimeMessageType.CursorSet;
+  name: string;
+  log_name: string;
+  /** ISO-8601 datetime to move the cursor to (may be earlier than now). */
+  last_read_at: string;
+}
+
+/** Memories tab → background: clear a collection's read cursor over one log */
+export interface RuntimeCursorClear {
+  type: typeof RuntimeMessageType.CursorClear;
+  name: string;
+  log_name: string;
 }
 
 /** Memories tab → background: archive a memory */
@@ -777,7 +826,9 @@ export type RuntimeMessage =
   | RuntimeMemoryArchive
   | RuntimeEntryCreate
   | RuntimeEntryUpdate
-  | RuntimeEntryDelete;
+  | RuntimeEntryDelete
+  | RuntimeCursorSet
+  | RuntimeCursorClear;
 
 // --- Domain permissions ---
 

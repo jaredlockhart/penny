@@ -4,6 +4,7 @@
  */
 
 import {
+  type CursorRecord,
   type DomainAllowlist,
   DomainPermission as DP,
   type DomainPermissionEntry,
@@ -51,6 +52,7 @@ const promptsLoading = document.getElementById("prompts-loading")!;
 const promptsLoadMore = document.getElementById("prompts-load-more")!;
 const promptsLoadMoreBtn = document.getElementById("prompts-load-more-btn")!;
 let activeAgentFilter = "";
+let promptSearch = "";
 
 const AGENT_LABELS: Record<string, string> = {
   collector: '<i class="fa-solid fa-database"></i> Collector',
@@ -81,6 +83,7 @@ type MemoryTab = "collections" | "logs" | "archived";
 let allMemories: MemoryRecord[] = [];
 let activeMemoryName: string | null = null;
 let activeMemoryTab: MemoryTab = "collections";
+let memorySearch = "";
 
 // Detail view pagination — each section accumulates pages independently so
 // opening a big collection/log never loads its whole history at once.
@@ -89,6 +92,7 @@ let memoryEntries: MemoryEntryRecord[] = [];
 let memoryEntriesHasMore = false;
 let memoryRuns: MemoryEntryRecord[] = [];
 let memoryRunsHasMore = false;
+let memoryCursors: CursorRecord[] = [];
 // Name of the collection whose extractor is currently running on demand
 // (drives the "run extractor" button's disabled/spinner state).
 let triggeringCollection: string | null = null;
@@ -214,6 +218,26 @@ function setupPrompts(): void {
   promptsLoadMoreBtn.addEventListener("click", () => {
     requestPromptLogs(allRuns.length);
   });
+  const search = document.getElementById("prompts-search") as HTMLInputElement | null;
+  if (search) {
+    let timer = 0;
+    search.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        promptSearch = search.value.trim();
+        // Drop the stale list immediately and show only the loader while the
+        // query runs — don't leave the full log visible underneath.
+        allRuns = [];
+        runsContainer.innerHTML = "";
+        runElements.clear();
+        promptsLoadMore.classList.add("hidden");
+        promptsLoading.textContent = promptSearch ? "Searching…" : "Loading prompt logs…";
+        promptsLoading.classList.remove("hidden");
+        requestPromptLogs(0);
+      }, 250);
+    });
+  }
+  wireSearchClear("prompts-search", "prompts-search-clear");
 }
 
 function requestPromptLogs(offset: number): void {
@@ -222,6 +246,7 @@ function requestPromptLogs(offset: number): void {
     type: RuntimeMessageType.PromptLogsRequest,
     agent_name: agentName,
     offset,
+    query: promptSearch || undefined,
   });
 }
 
@@ -334,15 +359,45 @@ function renderPrompts(): void {
   activeRunId = null;
 
   if (allRuns.length === 0) {
-    const label = activeAgentFilter || "any agent";
-    promptsLoading.textContent = `No prompt logs for ${label}.`;
+    promptsLoading.textContent = promptSearch
+      ? `No prompts match “${promptSearch}”.`
+      : `No prompt logs for ${activeAgentFilter || "any agent"}.`;
     promptsLoading.classList.remove("hidden");
     return;
   }
 
+  if (promptSearch) runsContainer.appendChild(createSearchBanner(promptSearch));
   for (const run of allRuns) {
     runsContainer.appendChild(createRunRow(run));
   }
+}
+
+// Firefox doesn't render a native clear (✕) for ``type="search"``, so wire a
+// custom one: it shows only when there's text, and clearing dispatches an
+// ``input`` event so the existing search handler re-runs (unfiltered).
+function wireSearchClear(inputId: string, buttonId: string): void {
+  const input = document.getElementById(inputId) as HTMLInputElement | null;
+  const button = document.getElementById(buttonId);
+  if (!input || !button) return;
+  const sync = (): void => {
+    button.classList.toggle("visible", input.value.length > 0);
+  };
+  input.addEventListener("input", sync);
+  button.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+  });
+  sync();
+}
+
+// A consistent "Showing matches for X" line above any search-filtered list,
+// so it's always obvious the view is filtered rather than complete.
+function createSearchBanner(query: string): HTMLElement {
+  const banner = document.createElement("div");
+  banner.className = "search-banner";
+  banner.textContent = `Showing matches for “${query}”`;
+  return banner;
 }
 
 function appendRuns(newRuns: PromptLogRun[]): void {
@@ -416,11 +471,14 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
   agent.appendChild(spinner);
   header.appendChild(agent);
 
-  const promptType = extractPromptType(run);
-  if (promptType) {
+  // Prefer the bound collection a collector run targeted (knowledge,
+  // sick-stack, …) over the redundant prompt_type ("collector"), so every
+  // collector run is identifiable at a glance even without an outcome line.
+  const typeLabel = run.run_target || extractPromptType(run);
+  if (typeLabel) {
     const typeEl = document.createElement("span");
     typeEl.className = "run-type";
-    typeEl.textContent = promptType;
+    typeEl.textContent = typeLabel;
     header.appendChild(typeEl);
   }
 
@@ -1059,11 +1117,37 @@ function setupMemories(): void {
       renderMemoriesList();
     });
   }
+  const search = document.getElementById("memories-search") as HTMLInputElement | null;
+  if (search) {
+    let timer = 0;
+    search.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        // Server-side so the filter can match entry content too, not just the
+        // names/descriptions the list view already holds.
+        memorySearch = search.value.trim();
+        if (activeMemoryName) {
+          // A collection is open — re-filter its entries (new query or cleared).
+          browser.runtime.sendMessage({
+            type: RuntimeMessageType.MemoryDetailRequest,
+            name: activeMemoryName,
+            query: memorySearch || undefined,
+          });
+        } else {
+          requestMemories();
+        }
+      }, 250);
+    });
+  }
+  wireSearchClear("memories-search", "memories-search-clear");
 }
 
 function requestMemories(): void {
   memoriesLoading.classList.remove("hidden");
-  browser.runtime.sendMessage({ type: RuntimeMessageType.MemoriesRequest });
+  browser.runtime.sendMessage({
+    type: RuntimeMessageType.MemoriesRequest,
+    query: memorySearch || undefined,
+  });
 }
 
 function handleMemoriesResponse(memories: MemoryRecord[]): void {
@@ -1079,6 +1163,7 @@ function handleMemoryDetailResponse(message: RuntimeMemoryDetailResponse): void 
   memoryEntriesHasMore = message.entries_has_more;
   memoryRuns = message.collector_runs;
   memoryRunsHasMore = message.collector_runs_has_more;
+  memoryCursors = message.cursors;
   showMemoryDetail();
   renderMemoryDetail();
 }
@@ -1103,6 +1188,8 @@ function requestMemoryPage(section: MemorySection, offset: number): void {
     name: activeMemory.name,
     section,
     offset,
+    // Keep entry pagination filtered to the active search.
+    query: section === "entries" ? memorySearch || undefined : undefined,
   });
 }
 
@@ -1114,6 +1201,7 @@ function handleMemoryChanged(name: string | null): void {
     browser.runtime.sendMessage({
       type: RuntimeMessageType.MemoryDetailRequest,
       name: activeMemoryName,
+      query: memorySearch || undefined,
     });
   } else if (!activeMemoryName) {
     requestMemories();
@@ -1139,11 +1227,12 @@ function renderMemoriesList(): void {
   if (activeMemoryTab === "collections") {
     memoriesList.appendChild(createNewMemoryControl());
   }
+  if (memorySearch) memoriesList.appendChild(createSearchBanner(memorySearch));
   const visible = allMemories.filter(memoryMatchesTab);
   if (visible.length === 0) {
     const empty = document.createElement("div");
     empty.className = "panel-loading";
-    empty.textContent = emptyLabel(activeMemoryTab);
+    empty.textContent = memorySearch ? "No memories match." : emptyLabel(activeMemoryTab);
     memoriesList.appendChild(empty);
     return;
   }
@@ -1184,7 +1273,9 @@ function createNewMemoryForm(): HTMLElement {
 
   const fields = createMemoryFormFields({
     description: "",
-    recall: "off",
+    intent: "",
+    inclusion: "relevant",
+    recall: "relevant",
     extraction_prompt: "",
     collector_interval_seconds: null,
   });
@@ -1195,6 +1286,8 @@ function createNewMemoryForm(): HTMLElement {
 
   form.appendChild(labelled("Name", nameInput));
   form.appendChild(labelled("Description", fields.description));
+  form.appendChild(labelled("Intent", fields.intent));
+  form.appendChild(labelled("Inclusion", fields.inclusion));
   form.appendChild(labelled("Recall", fields.recall));
   form.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
   form.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
@@ -1216,13 +1309,20 @@ function createNewMemoryForm(): HTMLElement {
       showToast("Name is required");
       return;
     }
+    const intentValue = fields.intent.value.trim();
+    if (!intentValue) {
+      showToast("Intent is required — what should this collection do?");
+      return;
+    }
     const promptValue = fields.extractionPrompt.value.trim();
     const intervalValue = fields.intervalInput.value.trim();
     browser.runtime.sendMessage({
       type: RuntimeMessageType.MemoryCreate,
       name,
       description: fields.description.value.trim(),
-      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      intent: intentValue,
+      inclusion: fields.inclusion.value as "always" | "relevant" | "never",
+      recall: fields.recall.value as "recent" | "relevant" | "all",
       extraction_prompt: promptValue || null,
       collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
     });
@@ -1237,13 +1337,30 @@ function createNewMemoryForm(): HTMLElement {
 
 interface MemoryFormFields {
   description: HTMLTextAreaElement;
+  intent: HTMLTextAreaElement;
+  inclusion: HTMLSelectElement;
   recall: HTMLSelectElement;
   extractionPrompt: HTMLTextAreaElement;
   intervalInput: HTMLInputElement;
 }
 
+function selectOf(values: string[], selected: string): HTMLSelectElement {
+  const select = document.createElement("select");
+  select.className = "memory-form-input";
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    if (value === selected) option.selected = true;
+    select.appendChild(option);
+  }
+  return select;
+}
+
 function createMemoryFormFields(initial: {
   description: string;
+  intent: string;
+  inclusion: string;
   recall: string;
   extraction_prompt: string;
   collector_interval_seconds: number | null;
@@ -1253,15 +1370,15 @@ function createMemoryFormFields(initial: {
   description.rows = 2;
   description.value = initial.description;
 
-  const recall = document.createElement("select");
-  recall.className = "memory-form-input";
-  for (const value of ["off", "recent", "relevant", "all"]) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
-    if (value === initial.recall) option.selected = true;
-    recall.appendChild(option);
-  }
+  const intent = document.createElement("textarea");
+  intent.className = "memory-form-input";
+  intent.rows = 2;
+  intent.placeholder = "what you asked this collection to do, in your words";
+  intent.value = initial.intent;
+
+  // Stage-1 routing and stage-2 entry rendering are independent flags.
+  const inclusion = selectOf(["always", "relevant", "never"], initial.inclusion);
+  const recall = selectOf(["recent", "relevant", "all"], initial.recall);
 
   const extractionPrompt = document.createElement("textarea");
   extractionPrompt.className = "memory-form-input memory-form-prompt";
@@ -1282,7 +1399,7 @@ function createMemoryFormFields(initial: {
     intervalInput.value = String(initial.collector_interval_seconds);
   }
 
-  return { description, recall, extractionPrompt, intervalInput };
+  return { description, intent, inclusion, recall, extractionPrompt, intervalInput };
 }
 
 function labelled(label: string, control: HTMLElement): HTMLElement {
@@ -1331,6 +1448,8 @@ function createMemoryRow(memory: MemoryRecord): HTMLElement {
     browser.runtime.sendMessage({
       type: RuntimeMessageType.MemoryDetailRequest,
       name: memory.name,
+      // Carry the active search so the detail view shows only matching entries.
+      query: memorySearch || undefined,
     });
   });
 
@@ -1350,6 +1469,11 @@ function renderMemoryDetail(): void {
 
   memoryDetailContent.appendChild(createMemoryHeader(memory));
   memoryDetailContent.appendChild(createMemoryMetadataSection(memory));
+  // A collection's read positions over the logs it consumes — empty for logs
+  // and for collections that have not yet read any log.
+  if (memory.type === "collection" && memoryCursors.length > 0) {
+    memoryDetailContent.appendChild(createCursorsSection(memory, memoryCursors));
+  }
   memoryDetailContent.appendChild(
     createMemoryEntriesSection(memory, memoryEntries, memoryEntriesHasMore),
   );
@@ -1360,6 +1484,90 @@ function renderMemoryDetail(): void {
       createCollectorRunsSection(memory, memoryRuns, memoryRunsHasMore),
     );
   }
+}
+
+function createCursorsSection(memory: MemoryRecord, cursors: CursorRecord[]): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "memory-detail-section";
+
+  const title = document.createElement("h3");
+  title.textContent = "Read cursors";
+  section.appendChild(title);
+
+  const hint = document.createElement("p");
+  hint.className = "memory-cursor-hint";
+  hint.textContent =
+    "Where this collection has read up to in each log. Pick an earlier point to " +
+    "re-read from there (set it before your data starts to re-read everything); " +
+    "Clear starts fresh from the most recent entries.";
+  section.appendChild(hint);
+
+  for (const cursor of cursors) {
+    section.appendChild(createCursorRow(memory, cursor));
+  }
+  return section;
+}
+
+// datetime-local inputs speak local wall-clock "YYYY-MM-DDTHH:mm"; cursors are
+// stored/sent as UTC ISO-8601.  Convert in both directions at the boundary.
+function isoToLocalInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+function createCursorRow(memory: MemoryRecord, cursor: CursorRecord): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "memory-cursor-row";
+
+  const log = document.createElement("span");
+  log.className = "memory-cursor-log";
+  log.textContent = cursor.log_name;
+
+  const current = document.createElement("span");
+  current.className = "memory-cursor-current";
+  current.textContent = `read up to ${formatDateTime(cursor.last_read_at)}`;
+
+  const picker = document.createElement("input");
+  picker.type = "datetime-local";
+  picker.className = "memory-form-input";
+  picker.value = isoToLocalInput(cursor.last_read_at);
+
+  const setBtn = document.createElement("button");
+  setBtn.className = "memory-form-save";
+  setBtn.textContent = "Set";
+  setBtn.addEventListener("click", () => {
+    if (!picker.value) return;
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.CursorSet,
+      name: memory.name,
+      log_name: cursor.log_name,
+      last_read_at: new Date(picker.value).toISOString(),
+    });
+    showToast("Cursor set");
+  });
+
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "memory-form-archive";
+  clearBtn.textContent = "Clear";
+  clearBtn.addEventListener("click", () => {
+    browser.runtime.sendMessage({
+      type: RuntimeMessageType.CursorClear,
+      name: memory.name,
+      log_name: cursor.log_name,
+    });
+    showToast("Cursor cleared");
+  });
+
+  row.appendChild(log);
+  row.appendChild(current);
+  row.appendChild(picker);
+  row.appendChild(setBtn);
+  row.appendChild(clearBtn);
+  return row;
 }
 
 // "Load more" affordance shared by the detail view's paginated sections.
@@ -1489,12 +1697,16 @@ function createCollectionMetadataSection(memory: MemoryRecord): HTMLElement {
 
   const fields = createMemoryFormFields({
     description: memory.description,
+    intent: memory.intent ?? "",
+    inclusion: memory.inclusion,
     recall: memory.recall,
     extraction_prompt: memory.extraction_prompt ?? "",
     collector_interval_seconds: memory.collector_interval_seconds,
   });
 
   section.appendChild(labelled("Description", fields.description));
+  section.appendChild(labelled("Intent", fields.intent));
+  section.appendChild(labelled("Inclusion", fields.inclusion));
   section.appendChild(labelled("Recall", fields.recall));
   section.appendChild(labelled("Extraction prompt", fields.extractionPrompt));
   section.appendChild(labelled("Collector interval (seconds)", fields.intervalInput));
@@ -1535,7 +1747,9 @@ function createCollectionMetadataSection(memory: MemoryRecord): HTMLElement {
       type: RuntimeMessageType.MemoryUpdate,
       name: memory.name,
       description: fields.description.value.trim(),
-      recall: fields.recall.value as "off" | "recent" | "relevant" | "all",
+      intent: fields.intent.value.trim(),
+      inclusion: fields.inclusion.value as "always" | "relevant" | "never",
+      recall: fields.recall.value as "recent" | "relevant" | "all",
       extraction_prompt: fields.extractionPrompt.value.trim() || null,
       collector_interval_seconds: intervalValue ? Number(intervalValue) : null,
     });
@@ -1597,17 +1811,23 @@ function createMemoryEntriesSection(
   const section = document.createElement("div");
   section.className = "memory-entries-section";
 
+  if (memorySearch) section.appendChild(createSearchBanner(memorySearch));
+
   const title = document.createElement("h3");
   const shown = entries.length;
   const total = memory.entry_count;
-  title.textContent =
-    total > shown ? `Entries (showing ${shown} of ${total}, newest first)` : `Entries (${total})`;
+  if (memorySearch) {
+    title.textContent = `Entries (${shown}${hasMore ? "+" : ""})`;
+  } else {
+    title.textContent =
+      total > shown ? `Entries (showing ${shown} of ${total}, newest first)` : `Entries (${total})`;
+  }
   section.appendChild(title);
 
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "memory-entries-empty";
-    empty.textContent = "No entries yet.";
+    empty.textContent = memorySearch ? `No entries match “${memorySearch}”.` : "No entries yet.";
     section.appendChild(empty);
   } else {
     for (const entry of entries) {

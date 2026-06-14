@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from penny.agents.models import MessageRole
@@ -464,7 +464,11 @@ class MessageStore:
             logger.error("Failed to set run outcome for %s: %s", run_id, e)
 
     def get_prompt_log_runs(
-        self, limit: int = 50, offset: int = 0, agent_name: str | None = None
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        agent_name: str | None = None,
+        query: str | None = None,
     ) -> list[dict]:
         """Get prompt logs grouped by run_id, newest first.
 
@@ -474,9 +478,13 @@ class MessageStore:
         stage two loads the heavy prompt rows for just those runs.  This
         keeps the query cost proportional to the page size, not to the whole
         (multi-GB) promptlog table.
+
+        ``query`` filters to runs that have at least one prompt whose
+        ``response`` or ``thinking`` (the output the run produced — not its
+        shared input scaffolding) matches the text.
         """
         with self._session() as session:
-            run_ids_ordered = self._page_of_run_ids(session, limit, offset, agent_name)
+            run_ids_ordered = self._page_of_run_ids(session, limit, offset, agent_name, query)
             if not run_ids_ordered:
                 return []
 
@@ -500,11 +508,23 @@ class MessageStore:
 
     @staticmethod
     def _page_of_run_ids(
-        session: Session, limit: int, offset: int, agent_name: str | None
+        session: Session,
+        limit: int,
+        offset: int,
+        agent_name: str | None,
+        search: str | None = None,
     ) -> list[str]:
         """Return one page of run_ids, ordered newest-first by each run's most
         recent prompt.  Touches only the indexed run_id/timestamp columns — no
-        heavy JSON payloads — so it stays cheap as the table grows."""
+        heavy JSON payloads — so it stays cheap as the table grows.
+
+        ``search`` keeps only runs with a prompt whose ``response`` or
+        ``thinking`` matches it via the ``promptlog_fts`` full-text index
+        (migration 0051) — a per-word prefix MATCH, so it stays fast on the
+        multi-GB table instead of scanning every JSON blob.
+        """
+        if search:
+            return MessageStore._page_of_run_ids_fts(session, limit, offset, agent_name, search)
         query = select(PromptLog.run_id).where(PromptLog.run_id.isnot(None))  # ty: ignore[unresolved-attribute]
         if agent_name:
             query = query.where(PromptLog.agent_name == agent_name)
@@ -515,6 +535,31 @@ class MessageStore:
             .offset(offset)
         )
         return [run_id for run_id in session.exec(query).all() if run_id is not None]
+
+    @staticmethod
+    def _page_of_run_ids_fts(
+        session: Session, limit: int, offset: int, agent_name: str | None, search: str
+    ) -> list[str]:
+        """Run-id page for a full-text search, newest-first, via promptlog_fts.
+
+        The user's text becomes a per-word prefix query (``morning news`` →
+        ``morning* news*``, implicit AND).  With no searchable word characters
+        there is nothing to match, so return no runs."""
+        match = " ".join(f"{token}*" for token in re.findall(r"\w+", search.lower()))
+        if not match:
+            return []
+        agent_clause = "AND p.agent_name = :agent" if agent_name else ""
+        sql = text(
+            "SELECT p.run_id FROM promptlog p "
+            "JOIN promptlog_fts f ON f.rowid = p.id "
+            f"WHERE p.run_id IS NOT NULL AND promptlog_fts MATCH :q {agent_clause} "
+            "GROUP BY p.run_id ORDER BY MAX(p.timestamp) DESC LIMIT :limit OFFSET :offset"
+        )
+        params: dict[str, Any] = {"q": match, "limit": limit, "offset": offset}
+        if agent_name:
+            params["agent"] = agent_name
+        rows = session.execute(sql, params).all()
+        return [row[0] for row in rows if row[0] is not None]
 
     @staticmethod
     def _extract_token_usage(response: dict) -> tuple[int, int]:

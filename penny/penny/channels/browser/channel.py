@@ -25,6 +25,8 @@ from penny.channels.browser.models import (
     BROWSER_MSG_TYPE_COLLECTION_TRIGGER,
     BROWSER_MSG_TYPE_CONFIG_REQUEST,
     BROWSER_MSG_TYPE_CONFIG_UPDATE,
+    BROWSER_MSG_TYPE_CURSOR_CLEAR,
+    BROWSER_MSG_TYPE_CURSOR_SET,
     BROWSER_MSG_TYPE_DOMAIN_DELETE,
     BROWSER_MSG_TYPE_DOMAIN_UPDATE,
     BROWSER_MSG_TYPE_ENTRY_CREATE,
@@ -59,6 +61,8 @@ from penny.channels.browser.models import (
     BrowserCollectionTrigger,
     BrowserCollectionTriggerResult,
     BrowserConfigUpdate,
+    BrowserCursorClear,
+    BrowserCursorSet,
     BrowserDomainDelete,
     BrowserDomainPermissionsSync,
     BrowserDomainUpdate,
@@ -86,6 +90,7 @@ from penny.channels.browser.models import (
     BrowserScheduleUpdate,
     BrowserToolRequest,
     BrowserToolResponse,
+    CursorRecord,
     DomainPermissionRecord,
     MemoryEntryRecord,
     MemoryRecord,
@@ -319,7 +324,7 @@ class BrowserChannel(MessageChannel):
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORIES_REQUEST:
-            await self._handle_memories_request(ws)
+            await self._handle_memories_request(ws, data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_DETAIL_REQUEST:
@@ -332,6 +337,14 @@ class BrowserChannel(MessageChannel):
 
         if msg_type == BROWSER_MSG_TYPE_COLLECTION_TRIGGER:
             await self._handle_collection_trigger(ws, data)
+            return
+
+        if msg_type == BROWSER_MSG_TYPE_CURSOR_SET:
+            self._handle_cursor_set(data)
+            return device_label
+
+        if msg_type == BROWSER_MSG_TYPE_CURSOR_CLEAR:
+            self._handle_cursor_clear(data)
             return device_label
 
         if msg_type == BROWSER_MSG_TYPE_MEMORY_CREATE:
@@ -460,8 +473,9 @@ class BrowserChannel(MessageChannel):
         """Query prompt logs grouped by run_id and send them to the browser."""
         agent_name = data.get("agent_name") or None
         offset = int(data.get("offset", 0))
+        query = (data.get("query") or "").strip() or None
         runs = self._db.messages.get_prompt_log_runs(
-            limit=self._PROMPT_LOG_PAGE_SIZE, offset=offset, agent_name=agent_name
+            limit=self._PROMPT_LOG_PAGE_SIZE, offset=offset, agent_name=agent_name, query=query
         )
         response = {
             "type": BROWSER_RESP_TYPE_PROMPT_LOGS,
@@ -471,15 +485,35 @@ class BrowserChannel(MessageChannel):
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))
 
-    async def _handle_memories_request(self, ws: ServerConnection) -> None:
+    async def _handle_memories_request(self, ws: ServerConnection, data: dict) -> None:
         """List every memory (collections + logs, archived included) with
-        metadata + entry counts for the addon's Memories tab list view."""
+        metadata + entry counts for the addon's Memories tab list view.  An
+        optional ``query`` keeps memories matching by name / description /
+        intent OR holding an entry whose key or content contains the text."""
         memories = self._db.memories.list_all()
+        query = (data.get("query") or "").strip()
+        if query:
+            memories = self._filter_memories(memories, query)
         counts = self._db.memories.entry_counts()
         records = [self._memory_to_record(m, counts.get(m.name, 0)) for m in memories]
         payload = BrowserMemoriesResponse(memories=records)
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(payload.model_dump_json())
+
+    def _filter_memories(self, memories: list, query: str) -> list:
+        """Keep memories matching ``query`` by metadata or by entry content."""
+        needle = query.lower()
+        entry_matches = self._db.memories.names_with_entry_match(query)
+
+        def matches(memory) -> bool:
+            return (
+                needle in memory.name.lower()
+                or needle in memory.description.lower()
+                or (memory.intent is not None and needle in memory.intent.lower())
+                or memory.name in entry_matches
+            )
+
+        return [memory for memory in memories if matches(memory)]
 
     _MEMORY_PAGE_SIZE = 50
 
@@ -499,8 +533,11 @@ class BrowserChannel(MessageChannel):
             logger.warning("memory_detail_request for unknown memory: %s", req.name)
             return
         counts = self._db.memories.entry_counts()
+        query = (data.get("query") or "").strip() or None
         record = self._memory_to_record(memory, counts.get(memory.name, 0))
-        entries, entries_has_more = self._memory_section_page(memory, MEMORY_SECTION_ENTRIES, 0)
+        entries, entries_has_more = self._memory_section_page(
+            memory, MEMORY_SECTION_ENTRIES, 0, query
+        )
         runs, runs_has_more = self._memory_section_page(memory, MEMORY_SECTION_COLLECTOR_RUNS, 0)
         payload = BrowserMemoryDetailResponse(
             memory=record,
@@ -508,6 +545,7 @@ class BrowserChannel(MessageChannel):
             entries_has_more=entries_has_more,
             collector_runs=runs,
             collector_runs_has_more=runs_has_more,
+            cursors=self._cursors_for(memory),
         )
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(payload.model_dump_json())
@@ -524,7 +562,8 @@ class BrowserChannel(MessageChannel):
         if memory is None:
             logger.warning("memory_page_request for unknown memory: %s", req.name)
             return
-        entries, has_more = self._memory_section_page(memory, req.section, req.offset)
+        query = (data.get("query") or "").strip() or None
+        entries, has_more = self._memory_section_page(memory, req.section, req.offset, query)
         payload = BrowserMemoryPageResponse(
             name=req.name, section=req.section, entries=entries, has_more=has_more
         )
@@ -550,16 +589,42 @@ class BrowserChannel(MessageChannel):
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(result.model_dump_json())
 
+    def _handle_cursor_set(self, data: dict) -> None:
+        """Set a collection's read cursor over one log to a chosen point — a
+        user override (``set_position``) that may move backward to re-read."""
+        try:
+            req = BrowserCursorSet(**data)
+            last_read_at = datetime.fromisoformat(req.last_read_at)
+        except ValidationError, ValueError:
+            logger.warning("Invalid cursor_set: %s", str(data)[:200])
+            return
+        self._db.cursors.set_position(req.name, req.log_name, last_read_at)
+        self._on_memory_changed(req.name)
+
+    def _handle_cursor_clear(self, data: dict) -> None:
+        """Clear a collection's read cursor over one log — next cycle reads
+        recent entries afresh, not the whole history."""
+        try:
+            req = BrowserCursorClear(**data)
+        except ValidationError:
+            logger.warning("Invalid cursor_clear: %s", str(data)[:200])
+            return
+        self._db.cursors.clear(req.name, req.log_name)
+        self._on_memory_changed(req.name)
+
     def _memory_section_page(
-        self, memory, section: str, offset: int
+        self, memory, section: str, offset: int, query: str | None = None
     ) -> tuple[list[MemoryEntryRecord], bool]:
         """One newest-first page of a memory-detail section.  ``has_more`` is
-        true when the page filled the page size, matching the prompts tab."""
+        true when the page filled the page size, matching the prompts tab.
+        ``query`` filters the *entries* section to matching key/content so the
+        detail view mirrors the Memories-list search; collector runs are
+        activity, not search results, so they're never filtered."""
         if section == MEMORY_SECTION_COLLECTOR_RUNS:
             rows = self._collector_runs_for(memory, self._MEMORY_PAGE_SIZE, offset)
         else:
             rows = self._db.memories.read_latest(
-                memory.name, k=self._MEMORY_PAGE_SIZE, offset=offset
+                memory.name, k=self._MEMORY_PAGE_SIZE, offset=offset, search=query
             )
         records = [self._entry_to_record(row) for row in rows]
         return records, len(records) == self._MEMORY_PAGE_SIZE
@@ -577,12 +642,24 @@ class BrowserChannel(MessageChannel):
             offset=offset,
         )
 
+    def _cursors_for(self, memory) -> list[CursorRecord]:
+        """The collection's read positions over the logs it reads, oldest log
+        name first for stable display.  Empty for logs (which aren't readers)."""
+        if memory.type != "collection":
+            return []
+        cursors = self._db.cursors.list_for(memory.name)
+        return [
+            CursorRecord(log_name=log_name, last_read_at=last_read_at.isoformat())
+            for log_name, last_read_at in sorted(cursors)
+        ]
+
     @staticmethod
     def _memory_to_record(memory, entry_count: int) -> MemoryRecord:
         return MemoryRecord(
             name=memory.name,
             type=memory.type,
             description=memory.description,
+            intent=memory.intent,
             inclusion=memory.inclusion,
             recall=memory.recall,
             archived=memory.archived,
@@ -657,6 +734,7 @@ class BrowserChannel(MessageChannel):
                 extraction_prompt=req.extraction_prompt,
                 collector_interval_seconds=req.collector_interval_seconds,
                 description_embedding=description_embedding,
+                intent=req.intent,
             )
         except MemoryAlreadyExistsError:
             logger.warning("memory_create with duplicate name: %s", req.name)
@@ -686,6 +764,7 @@ class BrowserChannel(MessageChannel):
             self._db.memories.update_collection_metadata(
                 req.name,
                 description=req.description,
+                intent=req.intent,
                 inclusion=inclusion,
                 recall=recall,
                 extraction_prompt=req.extraction_prompt,

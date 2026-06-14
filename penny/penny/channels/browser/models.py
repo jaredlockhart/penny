@@ -35,6 +35,8 @@ BROWSER_MSG_TYPE_ENTRY_CREATE = "entry_create"
 BROWSER_MSG_TYPE_ENTRY_UPDATE = "entry_update"
 BROWSER_MSG_TYPE_ENTRY_DELETE = "entry_delete"
 BROWSER_MSG_TYPE_COLLECTION_TRIGGER = "collection_trigger"
+BROWSER_MSG_TYPE_CURSOR_SET = "cursor_set"
+BROWSER_MSG_TYPE_CURSOR_CLEAR = "cursor_clear"
 
 # Outgoing message types (server → browser)
 BROWSER_RESP_TYPE_MESSAGE = "message"
@@ -246,6 +248,7 @@ class MemoryRecord(BaseModel):
     name: str
     type: str  # "collection" | "log"
     description: str
+    intent: str | None  # the user's stated goal at creation (editable only here)
     inclusion: str  # "always" | "relevant" | "never" — stage-1 routing
     recall: str  # "all" | "relevant" | "recent" — stage-2 entry rendering
     archived: bool
@@ -253,6 +256,14 @@ class MemoryRecord(BaseModel):
     collector_interval_seconds: int | None
     last_collected_at: str | None
     entry_count: int
+
+
+class CursorRecord(BaseModel):
+    """One read-cursor a collection holds over a log it reads — its position
+    (``last_read_at``, ISO-8601 UTC) in that log."""
+
+    log_name: str
+    last_read_at: str
 
 
 class MemoryEntryRecord(BaseModel):
@@ -286,6 +297,7 @@ class BrowserMemoryDetailResponse(BaseModel):
     entries_has_more: bool = False
     collector_runs: list[MemoryEntryRecord] = []
     collector_runs_has_more: bool = False
+    cursors: list[CursorRecord] = []  # read positions over the logs this collection reads
 
 
 class BrowserMemoryPageResponse(BaseModel):
@@ -331,6 +343,7 @@ class BrowserMemoryCreate(BaseModel):
     type: str
     name: str
     description: str
+    intent: str | None = None  # the user's goal for this collection
     inclusion: str | None = None  # "always" | "relevant" | "never" (default relevant)
     recall: str  # "all" | "relevant" | "recent" (legacy "off" → inclusion=never)
     extraction_prompt: str | None = None
@@ -339,15 +352,37 @@ class BrowserMemoryCreate(BaseModel):
 
 class BrowserMemoryUpdate(BaseModel):
     """Edit metadata on an existing collection.  Only collections are user-
-    editable; logs are read-only by design."""
+    editable; logs are read-only by design.  ``intent`` is editable here (the
+    user owns the spec) even though the agent's ``collection_update`` tool
+    cannot touch it."""
 
     type: str
     name: str
     description: str | None = None
+    intent: str | None = None
     inclusion: str | None = None  # "always" | "relevant" | "never"
     recall: str | None = None  # "all" | "relevant" | "recent"
     extraction_prompt: str | None = None
     collector_interval_seconds: int | None = None
+
+
+class BrowserCursorSet(BaseModel):
+    """Set a collection's read cursor over one log to a chosen point (a user
+    override that may move backward — e.g. re-read from an earlier date)."""
+
+    type: str
+    name: str  # the collection (cursor owner)
+    log_name: str
+    last_read_at: str  # ISO-8601
+
+
+class BrowserCursorClear(BaseModel):
+    """Clear a collection's read cursor over one log — next cycle reads recent
+    entries afresh (the first-cycle behavior), not the whole history."""
+
+    type: str
+    name: str  # the collection (cursor owner)
+    log_name: str
 
 
 class BrowserMemoryArchive(BaseModel):

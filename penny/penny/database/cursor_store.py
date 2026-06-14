@@ -65,6 +65,53 @@ class CursorStore:
                 session.add(row)
             session.commit()
 
+    def list_for(self, agent_name: str) -> list[tuple[str, datetime]]:
+        """Every cursor this owner holds, as ``(memory_name, last_read_at)``.
+
+        For a collector the owner is the bound collection name, so this is the
+        set of logs that collection has read, with its position in each.
+        """
+        with self._session() as session:
+            rows = session.exec(
+                select(AgentCursor).where(AgentCursor.agent_name == agent_name)
+            ).all()
+            return [(row.memory_name, _to_utc(row.last_read_at)) for row in rows]
+
+    def set_position(self, agent_name: str, memory_name: str, last_read_at: datetime) -> None:
+        """Unconditionally set the cursor — a user override that, unlike
+        ``advance_committed``, MAY move backward (re-read from an earlier point)."""
+        incoming = _to_utc(last_read_at)
+        with self._session() as session:
+            row = session.exec(
+                select(AgentCursor).where(
+                    AgentCursor.agent_name == agent_name,
+                    AgentCursor.memory_name == memory_name,
+                )
+            ).first()
+            now = datetime.now(UTC)
+            if row is None:
+                row = AgentCursor(
+                    agent_name=agent_name, memory_name=memory_name, last_read_at=incoming
+                )
+            row.last_read_at = incoming
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+
+    def clear(self, agent_name: str, memory_name: str) -> None:
+        """Delete the cursor row — the next cycle then behaves as a first cycle
+        (reads the most recent entries, not the whole history)."""
+        with self._session() as session:
+            row = session.exec(
+                select(AgentCursor).where(
+                    AgentCursor.agent_name == agent_name,
+                    AgentCursor.memory_name == memory_name,
+                )
+            ).first()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
 
 def _to_utc(dt: datetime) -> datetime:
     """Attach UTC to a naive datetime; normalize aware datetimes to UTC."""

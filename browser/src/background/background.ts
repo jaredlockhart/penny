@@ -170,13 +170,13 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.ScheduleDelete) {
     sendScheduleDelete(message.schedule_id);
   } else if (message.type === RuntimeMessageType.PromptLogsRequest) {
-    requestPromptLogs(message.agent_name, message.offset);
+    requestPromptLogs(message.agent_name, message.offset, message.query);
   } else if (message.type === RuntimeMessageType.MemoriesRequest) {
-    requestMemories();
+    requestMemories(message.query);
   } else if (message.type === RuntimeMessageType.MemoryDetailRequest) {
-    requestMemoryDetail(message.name);
+    requestMemoryDetail(message.name, message.query);
   } else if (message.type === RuntimeMessageType.MemoryPageRequest) {
-    requestMemoryPage(message.name, message.section, message.offset);
+    requestMemoryPage(message.name, message.section, message.offset, message.query);
   } else if (message.type === RuntimeMessageType.CollectionTrigger) {
     triggerCollection(message.name);
   } else if (message.type === RuntimeMessageType.MemoryCreate) {
@@ -191,6 +191,10 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
     sendEntryUpdate(message.memory, message.key, message.content);
   } else if (message.type === RuntimeMessageType.EntryDelete) {
     sendEntryDelete(message.memory, message.key);
+  } else if (message.type === RuntimeMessageType.CursorSet) {
+    sendCursorSet(message.name, message.log_name, message.last_read_at);
+  } else if (message.type === RuntimeMessageType.CursorClear) {
+    sendCursorClear(message.name, message.log_name);
   }
 }
 
@@ -288,6 +292,7 @@ function connect(): void {
         entries_has_more: data.entries_has_more,
         collector_runs: data.collector_runs,
         collector_runs_has_more: data.collector_runs_has_more,
+        cursors: data.cursors,
       });
     } else if (data.type === WsIn.MemoryPageResponse) {
       broadcastToSidebar({
@@ -402,27 +407,44 @@ function sendScheduleDelete(scheduleId: number): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.ScheduleDelete, schedule_id: scheduleId }));
 }
 
-function requestPromptLogs(agentName?: string, offset?: number): void {
+function requestPromptLogs(agentName?: string, offset?: number, query?: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const payload: Record<string, unknown> = { type: WsOutgoingType.PromptLogsRequest };
   if (agentName) payload.agent_name = agentName;
   if (offset) payload.offset = offset;
+  if (query) payload.query = query;
   ws.send(JSON.stringify(payload));
 }
 
-function requestMemories(): void {
+function requestMemories(query?: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.MemoriesRequest }));
+  const payload: Record<string, unknown> = { type: WsOutgoingType.MemoriesRequest };
+  if (query) payload.query = query;
+  ws.send(JSON.stringify(payload));
 }
 
-function requestMemoryDetail(name: string): void {
+function requestMemoryDetail(name: string, query?: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.MemoryDetailRequest, name }));
+  const payload: Record<string, unknown> = { type: WsOutgoingType.MemoryDetailRequest, name };
+  if (query) payload.query = query;
+  ws.send(JSON.stringify(payload));
 }
 
-function requestMemoryPage(name: string, section: MemorySection, offset: number): void {
+function requestMemoryPage(
+  name: string,
+  section: MemorySection,
+  offset: number,
+  query?: string,
+): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: WsOutgoingType.MemoryPageRequest, name, section, offset }));
+  const payload: Record<string, unknown> = {
+    type: WsOutgoingType.MemoryPageRequest,
+    name,
+    section,
+    offset,
+  };
+  if (query) payload.query = query;
+  ws.send(JSON.stringify(payload));
 }
 
 function triggerCollection(name: string): void {
@@ -433,6 +455,8 @@ function triggerCollection(name: string): void {
 function sendMemoryCreate(message: {
   name: string;
   description: string;
+  intent: string;
+  inclusion: string;
   recall: string;
   extraction_prompt?: string | null;
   collector_interval_seconds?: number | null;
@@ -442,6 +466,8 @@ function sendMemoryCreate(message: {
     type: WsOutgoingType.MemoryCreate,
     name: message.name,
     description: message.description,
+    intent: message.intent,
+    inclusion: message.inclusion,
     recall: message.recall,
     extraction_prompt: message.extraction_prompt ?? null,
     collector_interval_seconds: message.collector_interval_seconds ?? null,
@@ -451,6 +477,8 @@ function sendMemoryCreate(message: {
 function sendMemoryUpdate(message: {
   name: string;
   description?: string | null;
+  intent?: string | null;
+  inclusion?: string | null;
   recall?: string | null;
   extraction_prompt?: string | null;
   collector_interval_seconds?: number | null;
@@ -460,10 +488,27 @@ function sendMemoryUpdate(message: {
     type: WsOutgoingType.MemoryUpdate,
     name: message.name,
     description: message.description ?? null,
+    intent: message.intent ?? null,
+    inclusion: message.inclusion ?? null,
     recall: message.recall ?? null,
     extraction_prompt: message.extraction_prompt ?? null,
     collector_interval_seconds: message.collector_interval_seconds ?? null,
   }));
+}
+
+function sendCursorSet(name: string, logName: string, lastReadAt: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: WsOutgoingType.CursorSet,
+    name,
+    log_name: logName,
+    last_read_at: lastReadAt,
+  }));
+}
+
+function sendCursorClear(name: string, logName: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: WsOutgoingType.CursorClear, name, log_name: logName }));
 }
 
 function sendMemoryArchive(name: string): void {
