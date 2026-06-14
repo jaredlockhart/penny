@@ -1077,38 +1077,42 @@ async def test_recall_archived_memory_skipped(signal_server, mock_llm, test_conf
 async def test_chat_tool_surface_excludes_entry_mutations(
     signal_server, mock_llm, test_config, running_penny
 ):
-    """Chat must not have any tool that mutates collection entries.
+    """Chat gets the full memory surface — entry mutations included.
 
-    Entry curation (insert / update / delete / move) is owned by the
-    per-collection collector subagents.  Stripping these from chat
-    structurally prevents the "I added that to your memory" failure
-    mode where chat narrates a write that never happened — chat
-    literally has no write tool to fabricate a write with.
+    Capability is no longer curated by omission: the user can direct chat
+    to fix a skill, correct a thought, seed a collection, or re-roll an
+    entry mid-conversation.  Invalid calls are rejected by deterministic
+    invariants (e.g. ``log_append`` to a system log) with a readable
+    refusal, not by withholding the tool.  Loop-control tools (``done`` /
+    ``send_message``) stay background-only and must NOT be here, or the
+    model may call ``done`` instead of replying.
     """
     async with running_penny(test_config) as penny:
         names = {tool.name for tool in penny.chat_agent.get_tools()}
 
-        # Forbidden entry mutations — those are collector-only
-        assert "collection_write" not in names
-        assert "update_entry" not in names
-        assert "collection_move" not in names
-        assert "collection_delete_entry" not in names
-        assert "log_append" not in names
+        # Entry mutations — now available to chat (user-directed edits).
+        assert "collection_write" in names
+        assert "update_entry" in names
+        assert "collection_move" in names
+        assert "collection_delete_entry" in names
+        assert "log_append" in names
 
-        # Lifecycle stays so the user can create / modify / archive collections
-        # mid-conversation.  ``collection_update`` here is the metadata tool,
-        # not the entry-content tool (that was renamed to ``update_entry``).
+        # Lifecycle / shape.
         assert "collection_create" in names
         assert "collection_update" in names
         assert "log_create" in names
         assert "collection_archive" in names
         assert "collection_unarchive" in names
 
-        # Reads stay — chat needs them for "tell me what's saved" style queries
+        # Reads.
         assert "read_latest" in names
         assert "read_similar" in names
         assert "collection_get" in names
         assert "collection_keys" in names
+
+        # Loop-control stays background-only — never on the chat surface.
+        assert "done" not in names
+        assert "send_message" not in names
 
 
 # ── 7. Quote-reply handling ───────────────────────────────────────────────

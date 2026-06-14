@@ -12,6 +12,7 @@ import hashlib
 import pytest
 from pydantic import ValidationError
 
+from penny.constants import PennyConstants
 from penny.database import Database
 from penny.llm.client import LlmClient
 from penny.tools.memory_tools import (
@@ -107,6 +108,7 @@ class TestCreateAndList:
                 "Extract user likes from user-messages log and write to likes collection."
             ),
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         # Structured echo: collection name, interval, recall, prompt body all surfaced
         # so the chat agent can confirm-back without confabulating.
@@ -114,11 +116,15 @@ class TestCreateAndList:
         assert "interval: 3600s (1h)" in result
         assert "recall: relevant" in result
         assert "Extract user likes" in result  # extraction_prompt is echoed verbatim
+        # Intent captured at creation is persisted and echoed back so the user
+        # can correct it now — the only time it's settable.
+        assert "intent: a running list the user asked me to keep" in result
         memories = {m.name: m for m in db.memories.list_all()}
         assert memories["likes"].type == "collection"
         assert memories["likes"].recall == "relevant"
         assert memories["likes"].description == "positive prefs"
         assert memories["likes"].collector_interval_seconds == 3600
+        assert memories["likes"].intent == "a running list the user asked me to keep"
 
     @pytest.mark.asyncio
     async def test_create_log_persists(self, tmp_path):
@@ -140,6 +146,7 @@ class TestCreateAndList:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         result = await CollectionCreateTool(db, None).execute(
             name="ai-news",
@@ -148,6 +155,7 @@ class TestCreateAndList:
             recall="relevant",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         assert "already exists" in result
         assert "ai-news" in result
@@ -178,6 +186,7 @@ class TestCreateAndList:
             recall="recent",
             extraction_prompt="yes",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         assert "too short" in result
         assert "minimum" in result
@@ -224,6 +233,7 @@ class TestCreateAndList:
             recall="recent",
             extraction_prompt=prompt,
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         assert "Created" in result
 
@@ -238,6 +248,7 @@ class TestCreateAndList:
             recall="recent",
             extraction_prompt=original_prompt,
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         result = await CollectionUpdateTool(db, None).execute(name="notes", extraction_prompt="yes")
         assert "too short" in result
@@ -256,6 +267,7 @@ class TestCollectionWritesAndReads:
             recall="relevant",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         result = await write.execute(
@@ -280,6 +292,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(
@@ -307,6 +320,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "hello"}]
@@ -325,6 +339,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="likes", entries=[{"key": "first", "content": "1"}])
@@ -342,6 +357,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="likes", entries=[{"key": "a", "content": "1"}])
@@ -358,6 +374,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         client = _make_llm_client(mock_llm)
         await CollectionWriteTool(db, client, author="test").execute(
@@ -379,6 +396,7 @@ class TestCollectionWritesAndReads:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         result = await ReadSimilarTool(db, None).execute(memory="likes", anchor="whatever")
         assert "similarity search unavailable" in result
@@ -395,6 +413,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="likes", entries=[{"key": "k", "content": "old"}]
@@ -416,6 +435,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         result = await UpdateEntryTool(db, author="test").execute(
             memory="likes", key="k", content="new"
@@ -432,6 +452,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="notified",
@@ -440,6 +461,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
             memory="unnotified", entries=[{"key": "t1", "content": "x"}]
@@ -459,6 +481,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="b",
@@ -467,6 +490,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="a", entries=[{"key": "k", "content": "src"}])
@@ -486,6 +510,7 @@ class TestCollectionMutations:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         assert "Archived 'likes'" in await CollectionArchiveTool(db).execute(memory="likes")
         assert "Unarchived 'likes'" in await CollectionUnarchiveTool(db).execute(memory="likes")
@@ -534,6 +559,21 @@ class TestLogTools:
         )
         rendered = await LogReadRecentTool(db).execute(memory="events")
         assert "hello" in rendered
+
+    @pytest.mark.asyncio
+    async def test_append_to_system_log_is_refused(self, tmp_path, mock_llm):
+        """Invariant #1: the four framework-managed system logs are written
+        only by Python side-effects.  ``log_append`` from any agent gets a
+        readable refusal and writes nothing — guarding the conversation-turn
+        reconstruction and the run audit trail from model-authored entries."""
+        db = _make_db(tmp_path)
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        for system_log in PennyConstants.SYSTEM_LOGS:
+            result = await append.execute(memory=system_log, content="forged turn")
+            assert "Refused" in result
+            assert system_log in result
+        # Nothing was created/written — the refusal short-circuits before the store.
+        assert db.memories.get(PennyConstants.MEMORY_PENNY_MESSAGES_LOG) is None
 
     @pytest.mark.asyncio
     async def test_log_similar_with_client(self, tmp_path, mock_llm):
@@ -701,6 +741,7 @@ class TestExistsAndDone:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         client = _make_llm_client(mock_llm)
         await CollectionWriteTool(db, client, author="test").execute(
@@ -721,6 +762,7 @@ class TestExistsAndDone:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         result = await ExistsTool(db, _make_llm_client(mock_llm)).execute(
             memories=["likes"], key="not there", content="nothing"
@@ -741,6 +783,7 @@ class TestExistsAndDone:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         # Non-breaking hyphen U+2011 in the memory name — model output
@@ -767,6 +810,7 @@ class TestExistsAndDone:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         client = _make_llm_client(mock_llm)
         # Existing entry: short key, long descriptive content.
@@ -819,6 +863,7 @@ class TestAuthorAttribution:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(
             db, _make_llm_client(mock_llm), author="preference-extractor"
@@ -839,6 +884,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dst",
@@ -847,6 +893,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="src", entries=[{"key": "a", "content": "alpha"}])
@@ -870,6 +917,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dst",
@@ -878,6 +926,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
         await write.execute(memory="src", entries=[{"key": "shared", "content": "from src"}])
@@ -904,6 +953,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dst",
@@ -912,6 +962,7 @@ class TestCollectionMerge:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
 
         result = await CollectionMergeTool(db, "test").execute(from_memory="src", to_memory="dst")
@@ -969,57 +1020,53 @@ class TestTestExtractionPromptTool:
 
 
 class TestFactory:
-    """Two distinct surfaces, mutually exclusive: chat (lifecycle + reads, no
-    entry mutations) vs collector (reads + entry mutations pinned to scope).
+    """One uniform surface for every agent — reads + lifecycle (shape) + entry
+    mutations (contents).  Capability is no longer curated by omission; the
+    only per-agent difference is ``scope``, which drives the collector-binding
+    *invariant* (see TestScopedFactory), not which tools are present.
     """
 
-    def test_chat_surface_has_lifecycle_and_reads_only(self, tmp_path, mock_llm):
+    _FULL_SURFACE = {
+        # Reads
+        "collection_get",
+        "collection_read_random",
+        "collection_keys",
+        "collection_metadata",
+        "log_read_recent",
+        "log_read_next",
+        "read_latest",
+        "read_similar",
+        "exists",
+        # Lifecycle (shape)
+        "collection_create",
+        "collection_update",
+        "collection_merge",
+        "collection_archive",
+        "collection_unarchive",
+        "log_create",
+        # Entry mutations (contents)
+        "collection_write",
+        "update_entry",
+        "collection_delete_entry",
+        "collection_move",
+        "log_append",
+    }
+
+    def test_chat_surface_is_the_full_set(self, tmp_path, mock_llm):
+        """Chat (scope=None) gets every memory tool — entry mutations included,
+        unrestricted, since edits are user-directed."""
         db = _make_db(tmp_path)
         tools = build_memory_tools(db, _make_llm_client(mock_llm), agent_name="chat")
-        names = {tool.name for tool in tools}
-        assert names == {
-            # Lifecycle (chat owns the shape of memory)
-            "collection_create",
-            "collection_update",
-            "collection_merge",
-            "collection_archive",
-            "collection_unarchive",
-            "log_create",
-            # Reads
-            "collection_get",
-            "collection_read_random",
-            "collection_keys",
-            "collection_metadata",
-            "log_read_recent",
-            "log_read_next",
-            "read_latest",
-            "read_similar",
-            "exists",
-        }
+        assert {tool.name for tool in tools} == self._FULL_SURFACE
 
-    def test_collector_surface_has_scoped_writes_and_reads(self, tmp_path, mock_llm):
+    def test_collector_surface_is_the_same_full_set(self, tmp_path, mock_llm):
+        """A bound collector (scope=X) gets the identical surface — scope binds
+        its entry mutations to X but does not strip lifecycle/other tools."""
         db = _make_db(tmp_path)
         tools = build_memory_tools(
             db, _make_llm_client(mock_llm), agent_name="collector", scope="likes"
         )
-        names = {tool.name for tool in tools}
-        # Reads + entry mutations (pinned to scope) + log_append; no lifecycle
-        assert names == {
-            "collection_get",
-            "collection_read_random",
-            "collection_keys",
-            "collection_metadata",
-            "log_read_recent",
-            "log_read_next",
-            "read_latest",
-            "read_similar",
-            "exists",
-            "collection_write",
-            "update_entry",
-            "collection_delete_entry",
-            "collection_move",
-            "log_append",
-        }
+        assert {tool.name for tool in tools} == self._FULL_SURFACE
 
 
 class TestScopedFactory:
@@ -1040,6 +1087,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dislikes",
@@ -1048,6 +1096,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
 
         write = CollectionWriteTool(
@@ -1069,6 +1118,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
 
         write = CollectionWriteTool(
@@ -1099,6 +1149,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dst",
@@ -1107,6 +1158,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
             memory="src", entries=[{"key": "k", "content": "v"}]
@@ -1128,6 +1180,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionCreateTool(db, None).execute(
             name="dst",
@@ -1136,6 +1189,7 @@ class TestScopedFactory:
             recall="recent",
             extraction_prompt="test fixture extraction prompt",
             collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
         )
         await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
             memory="src", entries=[{"key": "k", "content": "v"}]

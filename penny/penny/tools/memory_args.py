@@ -57,6 +57,11 @@ class CollectionCreateArgs(BaseModel):
     tool surface so every model-created collection gets a working
     collector immediately, instead of silently sitting empty until the
     user notices.
+
+    ``intent`` is also required: capturing what the user asked for at
+    creation is part of creating a collection.  It is the spec a quality
+    collector later judges the prompt and behavior against, and it has no
+    field on ``collection_update`` — once set, it's immutable.
     """
 
     name: MemoryName
@@ -65,6 +70,7 @@ class CollectionCreateArgs(BaseModel):
     recall: str  # "all" | "relevant" | "recent" — validated in the store layer
     extraction_prompt: str
     collector_interval_seconds: int
+    intent: str
 
 
 class LogCreateArgs(BaseModel):

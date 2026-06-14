@@ -140,12 +140,14 @@ def _format_collection_echo(memory: Any, verb: str) -> str:
     so the model's reply can summarize accurately (the model previously
     confabulated this because the create/update returns were one-liners).
     """
+    intent_line = f"  intent: {memory.intent}\n" if memory.intent else ""
     return (
         f"{verb} collection '{memory.name}':\n"
         f"  interval: {memory.collector_interval_seconds}s "
         f"({_humanize_interval(memory.collector_interval_seconds)})\n"
         f"  inclusion: {memory.inclusion}\n"
         f"  recall: {memory.recall}\n"
+        f"{intent_line}"
         f"  description: {memory.description}\n"
         f"  extraction_prompt: |\n    "
         f"{(memory.extraction_prompt or '').replace(chr(10), chr(10) + '    ')}"
@@ -201,6 +203,10 @@ class CollectionCreateTool(Tool):
         "supply only the workflow.\n"
         "- ``collector_interval_seconds`` — REQUIRED.  How often the "
         "collector runs.\n"
+        "- ``intent`` — REQUIRED.  What the user asked for, in their own "
+        "words — the goal the collection serves, captured once at creation "
+        "and immutable thereafter.  Describe their request, not the "
+        "mechanism.\n"
         "\n"
         "Returns a structured echo of the stored fields (name, interval, "
         "recall, description, full extraction_prompt).  Use the echo to "
@@ -260,6 +266,17 @@ class CollectionCreateTool(Tool):
                     "21600 (6h), 86400 (daily)."
                 ),
             },
+            "intent": {
+                "type": "string",
+                "description": (
+                    "REQUIRED. What the user asked for, in their words — the "
+                    "goal this collection serves. Capture their actual request "
+                    '("a running list of good retro JRPGs to play"), not the '
+                    "mechanism. This is the spec the collection is later judged "
+                    "against and can't be changed after creation, so get it "
+                    "right; confirm it back to the user."
+                ),
+            },
         },
         "required": [
             "name",
@@ -268,6 +285,7 @@ class CollectionCreateTool(Tool):
             "recall",
             "extraction_prompt",
             "collector_interval_seconds",
+            "intent",
         ],
     }
 
@@ -289,6 +307,7 @@ class CollectionCreateTool(Tool):
                 extraction_prompt=args.extraction_prompt,
                 collector_interval_seconds=args.collector_interval_seconds,
                 description_embedding=description_embedding,
+                intent=args.intent,
             )
         except MemoryAlreadyExistsError:
             return f"Collection '{args.name}' already exists."
@@ -807,9 +826,10 @@ class CollectionMetadataTool(Tool):
 
     name = "collection_metadata"
     description = (
-        "Return metadata for a memory: description, recall mode, "
-        "collector interval, last collected timestamp, archived state, "
-        "and extraction prompt.  Works for both collections and logs."
+        "Return metadata for a memory: description, intent (the user's "
+        "original goal), recall mode, collector interval, last collected "
+        "timestamp, archived state, and extraction prompt.  Works for both "
+        "collections and logs."
     )
     parameters = {
         "type": "object",
@@ -846,6 +866,7 @@ class CollectionMetadataTool(Tool):
             f"name: {memory.name}",
             f"type: {memory.type}",
             f"description: {memory.description}",
+            f"intent: {memory.intent or 'none'}",
             f"inclusion: {memory.inclusion}",
             f"recall: {memory.recall}",
             f"archived: {memory.archived}",
@@ -1139,6 +1160,12 @@ class LogAppendTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = LogAppendArgs(**kwargs)
+        if args.memory in PennyConstants.SYSTEM_LOGS:
+            return (
+                f"Refused: '{args.memory}' is a system log written automatically "
+                "every turn (conversation and run history) — you can't append to "
+                "it. Use a collection or a log you created for your own notes."
+            )
         vec = await embed_text(self._llm, args.content)
         self._db.memories.append(
             args.memory,
@@ -1282,24 +1309,21 @@ def build_memory_tools(
 ) -> list[Tool]:
     """Construct the memory tool surface for an agent.
 
-    Two distinct surfaces, mutually exclusive:
+    **One uniform surface for every agent** — reads + lifecycle (shape)
+    + entry mutations (contents).  Capability is no longer curated by
+    omission; instead every agent gets the full set and deterministic
+    invariants in the tools / access layer reject invalid calls with a
+    message the model can read and react to:
 
-    * ``scope=None`` — **chat surface**.  Reads + lifecycle tools
-      (``collection_create``, ``collection_update`` for metadata,
-      ``collection_archive`` / ``collection_unarchive``, ``log_create``).
-      Chat owns the *shape* of memory.  No entry-mutation tools at all
-      (writes / updates / deletes / moves of entries, log appends) —
-      those belong to collectors.
-
-    * ``scope=X`` — **collector surface** for a collector bound to
-      collection ``X``.  Reads (unrestricted — a collector may pull
-      context from other memories) + entry mutations pinned to ``X``
-      (``collection_write`` / ``update_entry`` /
-      ``collection_delete_entry``, plus ``collection_move`` when
-      ``to_memory == X``) + ``log_append`` (logs are append-only inputs;
-      not the scope constraint) + ``send_message`` (added by
-      ``BackgroundAgent.get_tools`` when channel is wired).  Collectors
-      own the *contents* of their bound collection.
+    * **System logs are framework-only.** ``log_append`` refuses the
+      four side-effect-written system logs (``LogAppendTool.execute``).
+    * **Entry tools need a collection, not a log.** ``write`` /
+      ``update`` / ``delete`` / ``move`` go through ``_require_type`` in
+      the store, which raises on a log target.
+    * **Collector binding.** ``scope`` pins a collector's entry
+      mutations to its bound collection ``X`` (the ``scope`` check in
+      each entry-mutation tool).  Chat passes ``scope=None`` — its
+      entry mutations are unrestricted, since edits are user-directed.
 
     Reads are shape-agnostic (``read_latest`` / ``read_similar``); the
     parallel ``collection_*`` / ``log_*`` versions were merged earlier
@@ -1307,11 +1331,10 @@ def build_memory_tools(
     removed — pagination via ``read_latest(memory, k=N)`` is always
     safer than dumping a 1,000-entry collection into the prompt.
 
-    ``DoneTool`` is intentionally not in this surface — it's a
-    background-agent terminator added in ``BackgroundAgent.get_tools``
-    alongside ``send_message``.  Chat replies via final text and must
-    not have ``done`` available, or the model may call it instead of
-    producing a reply.
+    ``DoneTool`` / ``send_message`` are intentionally not here — they're
+    loop-control, not capability, added in ``BackgroundAgent.get_tools``.
+    Chat replies via final text and must not have ``done`` available, or
+    the model may call it instead of producing a reply.
     """
     reads: list[Tool] = [
         ReadLatestTool(db),
@@ -1324,22 +1347,19 @@ def build_memory_tools(
         LogReadNextTool(db, agent_name),
         ExistsTool(db, llm_client),
     ]
-    if scope is not None:
-        # Collector: reads + entry mutations on `scope` + log_append
-        return reads + [
-            CollectionWriteTool(db, llm_client, agent_name, scope=scope),
-            UpdateEntryTool(db, agent_name, scope=scope),
-            CollectionDeleteEntryTool(db, scope=scope),
-            CollectionMoveTool(db, agent_name, scope=scope),
-            LogAppendTool(db, llm_client, agent_name),
-        ]
-    # Chat: reads + lifecycle, no entry mutations
-    return [
+    lifecycle: list[Tool] = [
         CollectionCreateTool(db, llm_client),
         CollectionUpdateTool(db, llm_client),
         CollectionMergeTool(db, agent_name),
         CollectionArchiveTool(db),
         CollectionUnarchiveTool(db),
         LogCreateTool(db, llm_client),
-        *reads,
     ]
+    mutations: list[Tool] = [
+        CollectionWriteTool(db, llm_client, agent_name, scope=scope),
+        UpdateEntryTool(db, agent_name, scope=scope),
+        CollectionDeleteEntryTool(db, scope=scope),
+        CollectionMoveTool(db, agent_name, scope=scope),
+        LogAppendTool(db, llm_client, agent_name),
+    ]
+    return reads + lifecycle + mutations

@@ -183,6 +183,22 @@ class PennyConstants:
     MEMORY_PENNY_MESSAGES_LOG = "penny-messages"
     MEMORY_BROWSE_RESULTS_LOG = "browse-results"
 
+    # The system logs are populated exclusively by Python side-effects —
+    # channel ingress/egress (``user-messages`` / ``penny-messages``), the
+    # browse tool (``browse-results``), and the collector dispatcher
+    # (``collector-runs``).  Agents may *read* them but must never append via
+    # the ``log_append`` tool: a model-authored entry would corrupt the
+    # conversation-turn reconstruction or forge an audit row.  Enforced in
+    # ``LogAppendTool.execute``.
+    SYSTEM_LOGS = frozenset(
+        {
+            MEMORY_USER_MESSAGES_LOG,
+            MEMORY_PENNY_MESSAGES_LOG,
+            MEMORY_BROWSE_RESULTS_LOG,
+            MEMORY_COLLECTOR_RUNS_LOG,
+        }
+    )
+
     # System collections (created by migration 0027) that agents read and
     # write through the memory tool surface.
     MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"

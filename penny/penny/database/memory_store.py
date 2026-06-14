@@ -215,6 +215,7 @@ class MemoryStore:
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
         description_embedding: list[float] | None = None,
+        intent: str | None = None,
     ) -> Memory:
         return self._create_memory(
             name,
@@ -226,6 +227,7 @@ class MemoryStore:
             extraction_prompt=extraction_prompt,
             collector_interval_seconds=collector_interval_seconds,
             description_embedding=description_embedding,
+            intent=intent,
         )
 
     def create_log(
@@ -260,6 +262,7 @@ class MemoryStore:
         extraction_prompt: str | None = None,
         collector_interval_seconds: int | None = None,
         description_embedding: list[float] | None = None,
+        intent: str | None = None,
     ) -> Memory:
         name = _slug(name)
         if self.get(name) is not None:
@@ -275,6 +278,7 @@ class MemoryStore:
                 archived=archived,
                 extraction_prompt=extraction_prompt,
                 collector_interval_seconds=collector_interval_seconds,
+                intent=intent,
                 created_at=datetime.now(UTC),
             )
             session.add(memory)

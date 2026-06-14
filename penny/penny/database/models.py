@@ -230,6 +230,12 @@ class Memory(SQLModel, table=True):
     archived: bool = Field(default=False, index=True)
     extraction_prompt: str | None = Field(default=None)
     collector_interval_seconds: int | None = Field(default=None)
+    # The user's expressed goal when this collection was created, in their
+    # own words — the spec a quality collector judges the ``extraction_prompt``
+    # and observed behavior against.  Set once at creation, immutable
+    # thereafter (no field on ``collection_update``); NULL for system /
+    # migration-seeded collections.
+    intent: str | None = Field(default=None)
     last_collected_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(
