@@ -34,6 +34,9 @@ class ToolCallRecord(BaseModel):
     failed: bool = Field(
         default=False, description="Whether the tool returned an error or empty result"
     )
+    result: str | None = Field(
+        default=None, description="The tool's result/error text, set after execution"
+    )
 
 
 class ControllerResponse(BaseModel):

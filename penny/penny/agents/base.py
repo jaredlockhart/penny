@@ -113,9 +113,12 @@ def _strip_think_tags(content: str) -> tuple[str, str | None]:
 
 
 # Prefixes in tool result strings that indicate a failed or empty result.
-# Checked after tool execution to mark ToolCallRecord.failed = True.
+# Checked after tool execution to mark ToolCallRecord.failed = True.  A
+# ``Refused:`` shape/read-only refusal (the memory tools' wrong-shape message) is
+# a failed call too — the model asked for something the tool won't do.
 _TOOL_FAILURE_PREFIXES = (
     "Error: ",
+    "Refused: ",
     PennyResponse.NO_RESULTS_TEXT,
     "Failed to search:",
     "No browser connected",
@@ -929,16 +932,19 @@ class Agent:
         if tool_result.error:
             result_str = f"Error: {tool_result.error}"
             record.failed = True
+            record.result = result_str
             logger.debug("Tool result (failed): %s", result_str[:200])
             return result_str, record, []
 
         if isinstance(tool_result.result, SearchResult):
             result_str, urls = self._format_search_result(tool_result.result)
             record.failed = _is_tool_result_failed(result_str)
+            record.result = result_str
             logger.debug("Tool result: %s", result_str[:200])
             return result_str, record, urls
         result_str = str(tool_result.result)
         record.failed = _is_tool_result_failed(result_str)
+        record.result = result_str
         logger.debug("Tool result: %s", result_str[:200])
         return result_str, record, []
 

@@ -675,18 +675,32 @@ class MessageLogMemory(Log):
         return [self._to_entry(row) for row in rows]
 
 
-# Tool calls that are reads — rendered as ``read(<memory>)`` in a run record.
-_READ_TOOLS = frozenset(
-    {
-        "log_read",
-        "collection_read_latest",
-        "collection_read_random",
-        "collection_get",
-        "collection_keys",
-        "read_similar",
-        "exists",
-    }
-)
+def render_tool_call(name: str, args: object) -> str:
+    """Compact, grokkable render of one tool call (the salient args only).
+
+    The single shared format for tool activity — used by both the
+    ``collector-runs`` run trace and the ``prompt_test`` dry-run trace, so the
+    model reads what a cycle did the same way everywhere.  Reads render under
+    their real tool name (``collection_read_latest('x')`` / ``log_read('y')``) so
+    a wrong-shape or unknown-tool call is identifiable when it's surfaced as an
+    error.  Content is never truncated.
+    """
+    fields = cast("dict[str, Any]", args if isinstance(args, dict) else {})
+    if name == "collection_write":
+        return f"write({fields.get('memory', '?')}, {_write_contents(fields)!r})"
+    if name == "update_entry":
+        return f"update({fields.get('memory', '?')}, {fields.get('key', '?')!r})"
+    if name == "send_message":
+        return f"send({fields.get('content', '')!r})"
+    if name == "browse":
+        return f"browse({fields.get('queries', list(fields.values()))!r})"
+    if name == "collection_move":
+        return (
+            f"move({fields.get('key', '?')!r}: "
+            f"{fields.get('from_memory', '?')}→{fields.get('to_memory', '?')})"
+        )
+    rendered = ", ".join(f"{key}={value!r}" for key, value in fields.items())
+    return f"{name}({rendered or repr(args)})"
 
 
 def _parse_tool_args(function: dict) -> object:
@@ -858,7 +872,7 @@ class RunLog(Log):
         for name, args in cls._run_tool_calls(prompts):
             if name == "done":
                 continue
-            lines.append(cls._render_call(name, args))
+            lines.append(render_tool_call(name, args))
         return "\n".join(lines)
 
     @staticmethod
@@ -882,33 +896,12 @@ class RunLog(Log):
                     calls.append((function.get("name") or "?", _parse_tool_args(function)))
         return calls
 
-    @staticmethod
-    def _render_call(name: str, args: object) -> str:
-        """Compact, grokkable render of one tool call (the salient args only)."""
-        fields = cast("dict[str, Any]", args if isinstance(args, dict) else {})
-        if name == "collection_write":
-            return f"write({fields.get('memory', '?')}, {_write_contents(fields)!r})"
-        if name == "update_entry":
-            return f"update({fields.get('memory', '?')}, {fields.get('key', '?')!r})"
-        if name == "send_message":
-            return f"send({fields.get('content', '')!r})"
-        if name == "browse":
-            return f"browse({fields.get('queries', list(fields.values()))!r})"
-        if name == "collection_move":
-            return (
-                f"move({fields.get('key', '?')!r}: "
-                f"{fields.get('from_memory', '?')}→{fields.get('to_memory', '?')})"
-            )
-        if name in _READ_TOOLS:
-            return f"read({fields.get('memory', '?')})"
-        rendered = ", ".join(f"{key}={value!r}" for key, value in fields.items())
-        return f"{name}({rendered or repr(args)})"
-
 
 __all__ = [
     "Collection",
     "Log",
     "Memory",
+    "render_tool_call",
     "MessageLogMemory",
     "RunLog",
 ]

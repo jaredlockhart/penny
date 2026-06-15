@@ -27,15 +27,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from penny.agents.base import BackgroundAgent
-from penny.agents.models import ControllerResponse
+from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.config import Config
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
+from penny.database.memory import render_tool_call
 from penny.database.models import MemoryRow
 from penny.llm.client import LlmClient
 from penny.tools.base import Tool
@@ -200,8 +200,8 @@ class Collector(BackgroundAgent):
             channel=self._channel,
             candidate_prompt=candidate_prompt,
         )
-        captures = await runner.simulate(collection)
-        return _summarize_dry_run(collection_name, captures)
+        records = await runner.simulate(collection)
+        return _summarize_dry_run(collection_name, records)
 
     async def _execute_cycle(self, collection: MemoryRow) -> tuple[bool, str]:
         """Run one full agent cycle bound to ``collection`` with audit cleanup.
@@ -451,39 +451,25 @@ def _aware(dt: datetime) -> datetime:
 # ── Dry-run sandbox (backs the prompt_test tool) ──────────────────────────────
 
 
-@dataclass
-class _CapturedCall:
-    """A side-effecting tool call a dry-run cycle made — recorded, not executed."""
-
-    tool: str
-    arguments: dict
-
-
 class _CapturingTool(Tool):
     """Stands in for a side-effecting (or networked) tool during a dry run.
 
     Presents the wrapped tool's real name/description/parameters so the model
-    sees the identical surface, but ``execute`` records the call and returns a
-    canned result instead of mutating the DB, messaging the user, or hitting the
-    network.  No class-level ``name`` so it isn't entered in the Tool registry.
+    sees the identical surface, but ``execute`` returns a canned result instead
+    of mutating the DB, messaging the user, or hitting the network — so the cycle
+    runs end to end without side effects.  The call itself is still recorded in
+    the cycle's ``ControllerResponse.tool_calls`` (every call is), which is what
+    the dry-run summary renders; this wrapper only neutralises the *effect*.  No
+    class-level ``name`` so it isn't entered in the Tool registry.
     """
 
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        parameters: dict,
-        captures: list[_CapturedCall],
-        canned: str,
-    ) -> None:
+    def __init__(self, name: str, description: str, parameters: dict, canned: str) -> None:
         self.name = name
         self.description = description
         self.parameters = parameters
-        self._captures = captures
         self._canned = canned
 
     async def execute(self, **kwargs: object) -> str:
-        self._captures.append(_CapturedCall(self.name, dict(kwargs)))
         return self._canned
 
 
@@ -515,7 +501,6 @@ class _DryRunCollector(Collector):
             embedding_model_client=embedding_model_client,
         )
         self._candidate_prompt = candidate_prompt
-        self._captures: list[_CapturedCall] = []
         # send_message only enters the surface when a channel is bound; bind the
         # live one so the model can "call" it — the capturing wrapper means it's
         # never actually used.
@@ -545,7 +530,6 @@ class _DryRunCollector(Collector):
                 tool.name,
                 tool.description,
                 tool.parameters,
-                self._captures,
                 canned=f"(dry run) recorded {tool.name} — not applied",
             )
         if tool.name == BrowseTool.name:
@@ -553,31 +537,41 @@ class _DryRunCollector(Collector):
                 tool.name,
                 tool.description,
                 tool.parameters,
-                self._captures,
                 canned="(dry run) browse simulated — assume a few relevant items were found",
             )
         return tool
 
-    async def simulate(self, collection: MemoryRow) -> list[_CapturedCall]:
+    async def simulate(self, collection: MemoryRow) -> list[ToolCallRecord]:
+        """Run the candidate cycle and return EVERY tool call it made, with each
+        call's result/error — reads, refusals, and unknown-tool errors included,
+        not just the side-effecting writes/sends.  This is what the dry-run
+        summary renders so the model can see exactly what its draft would do."""
         self._current_target = collection
         try:
-            await self._run_cycle(uuid.uuid4().hex)
+            result = await self._run_cycle(uuid.uuid4().hex)
         finally:
             self._current_target = None
-        return self._captures
+        return result.response.tool_calls if result.response else []
 
 
-def _summarize_dry_run(collection_name: str, captures: list[_CapturedCall]) -> str:
-    """Render the captured calls into a result the model reasons about."""
-    sends = [call for call in captures if call.tool == SendMessageTool.name]
-    writes = [
-        call for call in captures if call.tool in _WORK_TOOLS and call.tool != SendMessageTool.name
-    ]
-    lines = [
-        f"Dry run of `{collection_name}` with the candidate prompt — what it WOULD do "
-        "this cycle (nothing was applied):",
-        f"- messages it would send to the user: {len(sends)}",
-    ]
-    lines.extend(f"    · {str(call.arguments.get('content', ''))[:160]}" for call in sends)
-    lines.append(f"- collection writes/edits/deletes it would make: {len(writes)}")
+def _summarize_dry_run(collection_name: str, records: list[ToolCallRecord]) -> str:
+    """Render the dry run's tool calls — the exact calls the candidate prompt
+    would make this cycle (nothing applied), in the same format as the
+    ``collector-runs`` trace.  A failed call (unknown tool, wrong shape for the
+    memory, or any refusal) is surfaced as an error with its reason, so the model
+    can see its draft is broken and correct it rather than guessing from counts.
+    """
+    header = (
+        f"Dry run of `{collection_name}` with the candidate prompt — the exact tool "
+        "calls it WOULD make this cycle (nothing was applied):"
+    )
+    if not records:
+        return f"{header}\n(the prompt produced no tool calls)"
+    lines = [header]
+    for index, record in enumerate(records, 1):
+        rendered = render_tool_call(record.tool, record.arguments)
+        if record.failed:
+            lines.append(f"{index}. Error: {rendered} → {record.result or 'failed'}")
+        else:
+            lines.append(f"{index}. {rendered}")
     return "\n".join(lines)
