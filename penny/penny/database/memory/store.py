@@ -31,6 +31,7 @@ from penny.database.memory.types import (
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
     MemoryType,
+    MemoryTypeError,
     RecallMode,
     slug,
 )
@@ -487,8 +488,6 @@ class MemoryStore:
         ]
 
     def _require_collection(self, name: str) -> None:
-        from penny.database.memory.types import MemoryTypeError
-
         memory = self.get(name)
         if memory is None:
             raise MemoryNotFoundError(name)

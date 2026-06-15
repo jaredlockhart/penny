@@ -49,6 +49,7 @@ from penny.database.memory.types import (
     EntrySide,
     LogEntryInput,
     MemoryType,
+    MemoryTypeError,
     MoveOutcome,
     ReadOnlyMemoryError,
     UpdateOutcome,
@@ -460,8 +461,6 @@ class Collection(Memory):
         return len(rows)
 
     def _require_destination_collection(self, to_name: str) -> None:
-        from penny.database.memory.types import MemoryTypeError
-
         with self._session() as session:
             row = session.get(MemoryRow, to_name)
         if row is None:
@@ -782,36 +781,50 @@ class RunLog(Log):
         """Completion rows → rendered run records as ``MemoryEntry`` (content =
         the record, created_at = completion time)."""
         with self._session() as session:
-            query = select(PromptLog.run_id, PromptLog.timestamp, PromptLog.id).where(
-                *self._completion_clauses()
-            )
-            if cursor is not None:
-                query = query.where(PromptLog.timestamp > cursor)
-            if window is not None:
-                query = query.where(
-                    PromptLog.timestamp >= window[0], PromptLog.timestamp <= window[1]
-                )
-            order = PromptLog.timestamp.desc() if newest_first else PromptLog.timestamp.asc()
-            query = query.order_by(order)  # type: ignore[union-attr]
-            if offset:
-                query = query.offset(offset)
-            if limit is not None:
-                query = query.limit(limit)
-            rows = [row for row in session.exec(query).all() if row[0] is not None]
+            rows = self._completion_rows(session, newest_first, cursor, window, limit, offset)
             if not rows:
                 return []
             grouped = self._group_prompts(session, [run_id for run_id, _, _ in rows])
-        return [
-            MemoryEntry(
-                id=last_id,
-                memory_name=self.name,
-                key=None,
-                content=self._render_run_record(grouped.get(run_id) or []),
-                author=PennyConstants.MessageAuthor.COLLECTOR,
-                created_at=timestamp,
-            )
-            for run_id, timestamp, last_id in rows
-        ]
+        return [self._to_record(run_id, ts, last_id, grouped) for run_id, ts, last_id in rows]
+
+    def _completion_rows(
+        self,
+        session: Session,
+        newest_first: bool,
+        cursor: datetime | None,
+        window: tuple[datetime, datetime] | None,
+        limit: int | None,
+        offset: int,
+    ) -> list:
+        """The ``(run_id, completion_time, last_prompt_id)`` run-index rows for
+        this scope — one per completed run, served by the partial index."""
+        query = select(PromptLog.run_id, PromptLog.timestamp, PromptLog.id).where(
+            *self._completion_clauses()
+        )
+        if cursor is not None:
+            query = query.where(PromptLog.timestamp > cursor)
+        if window is not None:
+            query = query.where(PromptLog.timestamp >= window[0], PromptLog.timestamp <= window[1])
+        order = PromptLog.timestamp.desc() if newest_first else PromptLog.timestamp.asc()
+        query = query.order_by(order)  # type: ignore[union-attr]
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        return [row for row in session.exec(query).all() if row[0] is not None]
+
+    def _to_record(
+        self, run_id: str, timestamp: datetime, last_id: int, grouped: dict[str, list[PromptLog]]
+    ) -> MemoryEntry:
+        """One run-index row rendered as a ``MemoryEntry`` (content = the record)."""
+        return MemoryEntry(
+            id=last_id,
+            memory_name=self.name,
+            key=None,
+            content=self._render_run_record(grouped.get(run_id) or []),
+            author=PennyConstants.MessageAuthor.COLLECTOR,
+            created_at=timestamp,
+        )
 
     @staticmethod
     def _group_prompts(session: Session, run_ids: list[str]) -> dict[str, list[PromptLog]]:

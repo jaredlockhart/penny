@@ -170,16 +170,19 @@ class SendMessageTool(Tool):
         return entries[0].created_at if entries else None
 
     def _count_sends_since_user_message(self) -> int:
-        """Number of Penny's outgoing messages newer than the latest user message."""
-        latest_user = self._latest_user_message_time()
-        cutoff = _to_naive(latest_user) if latest_user is not None else None
+        """Number of Penny's outgoing messages newer than the latest user message.
+
+        Bounded read: ``read_since(cutoff)`` pushes the ``timestamp > cutoff``
+        filter into SQL, so this touches only the post-cutoff tail, never the
+        whole (unbounded-growth) outgoing log.  With no user message yet, any
+        prior Penny send counts — a single bounded existence probe."""
         log = self._db.memory(PennyConstants.MEMORY_PENNY_MESSAGES_LOG)
-        count = 0
-        for entry in log.newest_entries() if log is not None else []:
-            if cutoff is not None and _to_naive(entry.created_at) <= cutoff:
-                break
-            count += 1
-        return count
+        if log is None:
+            return 0
+        cutoff = self._latest_user_message_time()
+        if cutoff is None:
+            return len(log.newest_entries(k=1))
+        return len(log.read_since(cutoff))
 
     def _latest_user_message_time(self) -> datetime | None:
         """Created-at of the most recent ``user-messages`` entry."""
