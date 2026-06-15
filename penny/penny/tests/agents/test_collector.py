@@ -17,8 +17,8 @@ from penny.agents.collector import Collector
 from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
-from penny.database.memory_store import Inclusion, LogEntryInput, RecallMode
-from penny.database.models import Memory
+from penny.database.memory import Inclusion, LogEntryInput, RecallMode
+from penny.database.models import MemoryRow
 from penny.llm.client import LlmClient
 from penny.tools.memory_tools import LogReadTool
 
@@ -43,7 +43,7 @@ def _make_collector(test_config, tmp_path) -> tuple[Collector, Database]:
     return collector, db
 
 
-def _get(db: Database, name: str) -> Memory:
+def _get(db: Database, name: str) -> MemoryRow:
     """Fetch a memory that the test just created — asserts it exists (typed)."""
     memory = db.memories.get(name)
     assert memory is not None
@@ -68,8 +68,9 @@ async def test_collector_cursors_partition_per_collection(test_config, tmp_path)
     """
     collector, db = _make_collector(test_config, tmp_path)
     db.memories.create_log("chatter", "log", Inclusion.ALWAYS, RecallMode.RECENT)
-    db.memories.append(
-        "chatter",
+    chatter = db.memory("chatter")
+    assert chatter is not None
+    chatter.append(
         [LogEntryInput(content="hello there", content_embedding=None)],
         author="user",
     )
@@ -248,7 +249,7 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
     rules are load-bearing (provenance, batched writes, gated send_message,
     structured done) — chat doesn't relay them, the collector base attaches
     them on every cycle."""
-    target = Memory(
+    target = MemoryRow(
         name="board-games",
         type="collection",
         description="Strategy board games worth buying",
@@ -308,8 +309,8 @@ def _seed_collector_runs_log(db: Database) -> None:
     db.memories.create_log("collector-runs", "audit log", Inclusion.NEVER, RecallMode.RECENT)
 
 
-def _target() -> Memory:
-    return Memory(
+def _target() -> MemoryRow:
+    return MemoryRow(
         name="board-games",
         type="collection",
         description="x",
@@ -543,7 +544,7 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
     onto cycle A's promptlog row even if A's loop crashed and B's
     cleanup runs later."""
     collector, db = _make_collector(test_config, tmp_path)
-    target_a = Memory(
+    target_a = MemoryRow(
         name="notified-thoughts",
         type="collection",
         description="x",
@@ -551,7 +552,7 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
         archived=False,
         extraction_prompt="x",
     )
-    target_b = Memory(
+    target_b = MemoryRow(
         name="card-games",
         type="collection",
         description="x",

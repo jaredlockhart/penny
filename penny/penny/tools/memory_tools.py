@@ -23,16 +23,18 @@ from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import (
+from penny.database.memory import (
     DedupThresholds,
     EntryInput,
     Inclusion,
     LogEntryInput,
+    Memory,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
-    MemoryType,
+    ReadOnlyMemoryError,
     RecallMode,
     WriteResult,
+    WrongShapeError,
 )
 from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
@@ -105,37 +107,18 @@ def _format_entries(
     return f"{len(entries)} {noun} from `{source}`{suffix}:\n{body}"
 
 
-def _format_run_records(records: list[Any]) -> str:
-    """Render the ``collector-runs`` facade batch — a count header plus each
-    run record (``[target] summary`` + trace), separated by ``---``."""
-    if not records:
-        return "(no collector runs)"
-    body = "\n---\n".join(f"{index}. {record.content}" for index, record in enumerate(records, 1))
-    return f"{len(records)} collector runs\n\n{body}"
+def _resolve(db: Database, name: str) -> Memory | str:
+    """The ``Memory`` object for ``name``, or a readable 'not found' string.
 
-
-def _wrong_shape(db: Database, name: str, want: MemoryType) -> str | None:
-    """Error string if ``name`` exists but isn't the shape this read tool serves.
-
-    Reads are shape-specific: ``collection_*`` reads operate only on collections;
-    ``log_read`` only on logs.  A wrong-shape call gets a readable
-    refusal pointing at the right tool instead of silently returning nothing (a
-    log has no keyed entries) or bypassing the cursored log interface (the
-    ``read_latest``-on-a-log footgun).  Missing memories pass through — the
-    underlying call emits its own 'not found'.
+    The single dispatch every content tool funnels through — the tool then calls
+    a method on the returned object and lets it refuse (``WrongShapeError`` /
+    ``ReadOnlyMemoryError``) any op that doesn't fit the memory's shape.  No tool
+    branches on the name or shape itself.
     """
-    memory = db.memories.get(name)
-    if memory is None or memory.type == want:
-        return None
-    if want == MemoryType.COLLECTION:
-        return (
-            f"Refused: '{name}' is a log, not a collection.  Read a log with "
-            f"log_read (recent batch / cursored, oldest-first)."
-        )
-    return (
-        f"Refused: '{name}' is a collection, not a log.  Read a collection with "
-        f"collection_read_latest / collection_get / collection_read_random / read_similar."
-    )
+    memory = db.memory(name)
+    if memory is None:
+        return f"Memory '{name}' not found."
+    return memory
 
 
 def check_extraction_prompt(prompt: str | None) -> str | None:
@@ -470,9 +453,13 @@ class CollectionGetTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionGetArgs(**kwargs)
-        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
-            return error
-        rows = self._db.memories.get_entry(args.memory, args.key)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            rows = memory.get(args.key)
+        except WrongShapeError as exc:
+            return str(exc)
         if not rows:
             return f"Key '{args.key}' not found in '{args.memory}'."
         return _format_entries(rows, source=args.memory)
@@ -505,9 +492,13 @@ class CollectionReadLatestTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLatestArgs(**kwargs)
-        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
-            return error
-        entries = self._db.memories.read_latest(args.memory, args.k)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            entries = memory.read_latest(args.k)
+        except WrongShapeError as exc:
+            return str(exc)
         return _format_entries(entries, source=args.memory, ordering="most recent first")
 
 
@@ -530,9 +521,13 @@ class CollectionReadRandomTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadRandomArgs(**kwargs)
-        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
-            return error
-        entries = self._db.memories.read_random(args.memory, args.k)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            entries = memory.read_random(args.k)
+        except WrongShapeError as exc:
+            return str(exc)
         return _format_entries(entries, source=args.memory, ordering="random sample")
 
 
@@ -572,7 +567,10 @@ class ReadSimilarTool(Tool):
                 "%s: similarity search unavailable — no embedding model configured", self.name
             )
             return "(similarity search unavailable — no embedding model configured)"
-        entries = self._db.memories.read_similar(args.memory, vec, args.k)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        entries = memory.read_similar(vec, args.k)
         return _format_entries(entries, source=args.memory, ordering="most relevant first")
 
 
@@ -592,9 +590,13 @@ class CollectionKeysTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
-        if error := _wrong_shape(self._db, args.memory, MemoryType.COLLECTION):
-            return error
-        keys = self._db.memories.keys(args.memory)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            keys = memory.keys()
+        except WrongShapeError as exc:
+            return str(exc)
         if not keys:
             return "(no keys)"
         return "\n".join(f"- {key}" for key in keys)
@@ -661,8 +663,14 @@ class CollectionWriteTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
         entries = [await self._build_entry(spec) for spec in args.entries]
-        results = self._db.memories.write(args.memory, entries, author=self._author)
+        try:
+            results = memory.write(entries, author=self._author)
+        except WrongShapeError as exc:
+            return str(exc)
         return self._format_results(args.memory, results)
 
     async def _build_entry(self, spec: CollectionEntrySpec) -> EntryInput:
@@ -739,7 +747,13 @@ class UpdateEntryTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        outcome = self._db.memories.update(args.memory, args.key, args.content, self._author)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            outcome = memory.update(args.key, args.content, self._author)
+        except WrongShapeError as exc:
+            return str(exc)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
         return f"Updated '{args.key}' in '{args.memory}'."
@@ -980,9 +994,13 @@ class CollectionMoveTool(Tool):
                 f"Refused: this collector can only write to '{self._scope}', "
                 f"not '{args.to_memory}'."
             )
-        outcome = self._db.memories.move(
-            args.key, args.from_memory, args.to_memory, author=self._author
-        )
+        source = _resolve(self._db, args.from_memory)
+        if isinstance(source, str):
+            return source
+        try:
+            outcome = source.move(args.key, args.to_memory, author=self._author)
+        except WrongShapeError as exc:
+            return str(exc)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.from_memory}'."
         if outcome == "collision":
@@ -1020,19 +1038,22 @@ class CollectionMergeTool(Tool):
         return self._merge(args.from_memory, args.to_memory)
 
     def _merge(self, from_name: str, to_name: str) -> str:
-        source_keys = self._db.memories.keys(from_name)
+        source = _resolve(self._db, from_name)
+        if isinstance(source, str):
+            return source
+        source_keys = source.keys()
         if not source_keys:
             self._db.memories.archive(from_name)
             return f"'{from_name}' was empty — archived with nothing to move."
-        moved, dropped = self._move_entries(from_name, to_name, source_keys)
+        moved, dropped = self._move_entries(source, to_name, source_keys)
         self._db.memories.archive(from_name)
         return self._summary(from_name, to_name, moved, dropped)
 
-    def _move_entries(self, from_name: str, to_name: str, keys: list[str]) -> tuple[int, int]:
+    def _move_entries(self, source: Memory, to_name: str, keys: list[str]) -> tuple[int, int]:
         moved = 0
         dropped = 0
         for key in keys:
-            outcome = self._db.memories.move(key, from_name, to_name, author=self._author)
+            outcome = source.move(key, to_name, author=self._author)
             if outcome == "ok":
                 moved += 1
             else:
@@ -1074,7 +1095,13 @@ class CollectionDeleteEntryTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        removed = self._db.memories.delete(args.memory, args.key)
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            removed = memory.delete(args.key)
+        except WrongShapeError as exc:
+            return str(exc)
         if removed == 0:
             return f"No entry with key '{args.key}' in '{args.memory}'."
         return f"Deleted '{args.key}' from '{args.memory}'."
@@ -1125,44 +1152,28 @@ class LogReadTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLogArgs(**kwargs)
-        if error := _wrong_shape(self._db, args.memory, MemoryType.LOG):
-            return error
-        if args.memory == PennyConstants.MEMORY_COLLECTOR_RUNS_LOG:
-            return self._read_runs(args.memory)
-        entries = (
-            self._read_cursor(args.memory) if self._cursor_mode else self._read_window(args.memory)
-        )
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
+        try:
+            entries = self._read_cursor(memory) if self._cursor_mode else self._read_window(memory)
+        except WrongShapeError as exc:
+            return str(exc)
         return _format_entries(entries, source=args.memory, ordering="oldest first")
 
-    def _read_runs(self, memory: str) -> str:
-        """``collector-runs`` is a read facade over ``promptlog`` — runs rendered
-        as records (see ``MessageStore.collector_runs_*``), same cursor/window
-        dispatch as any log, but the entries are derived, not stored."""
-        limit = PennyConstants.LOG_READ_LIMIT
-        if self._cursor_mode:
-            cursor = self._db.cursors.get(self._agent_name, memory)
-            records = self._db.messages.collector_runs_since(cursor, limit)
-            self._advance_pending(memory, [record.timestamp for record in records])
-        else:
-            records = self._db.messages.collector_runs_window(
-                PennyConstants.LOG_READ_WINDOW_SECONDS, limit
-            )
-        return _format_run_records(records)
-
-    def _read_cursor(self, memory: str) -> list[MemoryEntry]:
-        cursor = self._db.cursors.get(self._agent_name, memory)
-        limit = PennyConstants.LOG_READ_LIMIT
-        if cursor is None:
-            # First read on this log — bound to the most-recent N entries instead
-            # of the entire history (newest-first, reversed so the cursor advance
-            # tracks the latest timestamp).
-            entries = list(reversed(self._db.memories.read_latest(memory, k=limit)))
-        else:
-            # The next N since the cursor — bounded so a backlog is worked through
-            # in batches across cycles, never dumped into one loop.
-            entries = self._db.memories.read_since(memory, cursor, limit)
-        self._advance_pending(memory, [e.created_at for e in entries])
+    def _read_cursor(self, memory: Memory) -> list[MemoryEntry]:
+        """The next bounded batch since this agent's committed cursor.  The log
+        owns the read (first-read = most-recent N; later = next N since the
+        cursor); the tool only tracks the pending advance.  Uniform across every
+        log backing — ``collector-runs`` renders runs, the message logs read
+        ``messagelog``, all through the same ``read_batch``."""
+        cursor = self._db.cursors.get(self._agent_name, memory.name)
+        entries = memory.read_batch(cursor, PennyConstants.LOG_READ_LIMIT)
+        self._advance_pending(memory.name, [entry.created_at for entry in entries])
         return entries
+
+    def _read_window(self, memory: Memory) -> list[MemoryEntry]:
+        return memory.read_window(PennyConstants.LOG_READ_WINDOW_SECONDS)
 
     def _advance_pending(self, memory: str, timestamps: list[datetime]) -> None:
         """Track the highest timestamp seen this run as the pending cursor."""
@@ -1172,9 +1183,6 @@ class LogReadTool(Tool):
         prev = self._pending.get(memory)
         if prev is None or max_seen > prev:
             self._pending[memory] = max_seen
-
-    def _read_window(self, memory: str) -> list[MemoryEntry]:
-        return self._db.memories.read_recent(memory, PennyConstants.LOG_READ_WINDOW_SECONDS, None)
 
     def commit_pending(self) -> None:
         """Persist the highest timestamp seen during this run as the new cursor.
@@ -1221,12 +1229,17 @@ class LogAppendTool(Tool):
                 "every turn (conversation and run history) — you can't append to "
                 "it. Use a collection or a log you created for your own notes."
             )
+        memory = _resolve(self._db, args.memory)
+        if isinstance(memory, str):
+            return memory
         vec = await embed_text(self._llm, args.content)
-        self._db.memories.append(
-            args.memory,
-            [LogEntryInput(content=args.content, content_embedding=vec)],
-            author=self._author,
-        )
+        try:
+            memory.append(
+                [LogEntryInput(content=args.content, content_embedding=vec)],
+                author=self._author,
+            )
+        except (WrongShapeError, ReadOnlyMemoryError) as exc:
+            return str(exc)
         return f"Appended to '{args.memory}'."
 
 
@@ -1366,27 +1379,26 @@ def build_memory_tools(
 
     **One uniform surface for every agent** — reads + lifecycle (shape)
     + entry mutations (contents).  Capability is no longer curated by
-    omission; instead every agent gets the full set and deterministic
-    invariants in the tools / access layer reject invalid calls with a
-    message the model can read and react to:
+    omission; instead every tool funnels through ``db.memory(name)`` (via
+    ``_resolve``) and calls a method on the returned ``Memory`` object, which
+    refuses anything that doesn't fit its shape / read-only-ness — no tool
+    branches on a name or shape itself:
 
-    * **System logs are framework-only.** ``log_append`` refuses the
-      four side-effect-written system logs (``LogAppendTool.execute``).
-    * **Entry tools need a collection, not a log.** ``write`` /
-      ``update`` / ``delete`` / ``move`` go through ``_require_type`` in
-      the store, which raises on a log target.
+    * **Wrong shape.** A keyed read/write on a log (or a cursored ``log_read``
+      on a collection) hits a base no-op that raises ``WrongShapeError``; the
+      tool catches it and returns the readable refusal.  This is what stops a
+      newest-first ``collection_read_latest`` from bypassing a log's cursor.
+    * **Read-only facades.** ``log_append`` to ``user-messages`` /
+      ``penny-messages`` / ``collector-runs`` is refused up front
+      (``SYSTEM_LOGS``); the facades also raise ``ReadOnlyMemoryError`` if
+      reached, since they're views over ``messagelog`` / ``promptlog``.
     * **Collector binding.** ``scope`` pins a collector's entry
       mutations to its bound collection ``X`` (the ``scope`` check in
       each entry-mutation tool).  Chat passes ``scope=None`` — its
       entry mutations are unrestricted, since edits are user-directed.
 
-    Reads are shape-specific and refuse the wrong shape (``_wrong_shape``):
-    collections via ``collection_read_latest`` / ``collection_get`` /
-    ``collection_read_random`` / ``collection_keys``; logs only via the cursored
-    ``log_read`` (streams have no keyed get).  ``read_similar`` (embedding search) and
-    ``memory_metadata`` are the genuinely shape-agnostic reads.  Keeping each
-    content read shape-specific is what prevents a newest-first scan from
-    bypassing a log's cursor (the ``read_latest``-on-a-log footgun).
+    ``read_similar`` (embedding search) and ``memory_metadata`` are the
+    genuinely shape-agnostic reads — they work on either shape.
 
     ``DoneTool`` / ``send_message`` are intentionally not here — they're
     loop-control, not capability, added in ``BackgroundAgent.get_tools``.

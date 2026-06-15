@@ -4,15 +4,15 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
-from typing import Any, NamedTuple, cast
+from datetime import datetime
+from typing import Any, NamedTuple
 
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from penny.agents.models import MessageRole
-from penny.constants import PennyConstants, RunOutcome
-from penny.database.models import CommandLog, MemoryEntry, MessageLog, PromptLog
+from penny.constants import PennyConstants
+from penny.database.models import CommandLog, MessageLog, PromptLog
 
 logger = logging.getLogger(__name__)
 
@@ -21,53 +21,6 @@ _BOLD_ITALIC_RE = re.compile(r"\*{1,3}(.+?)\*{1,3}")
 _STRIKETHROUGH_RE = re.compile(r"~{1,2}(.+?)~{1,2}")
 _MONOSPACE_RE = re.compile(r"`(.+?)`")
 _TILDE_OPERATOR = "\u223c"
-
-# Tool calls that are reads \u2014 rendered as ``read(<memory>)`` in a run record.
-_READ_TOOLS = frozenset(
-    {
-        "log_read",
-        "collection_read_latest",
-        "collection_read_random",
-        "collection_get",
-        "collection_keys",
-        "read_similar",
-        "exists",
-    }
-)
-
-
-def _write_contents(fields: dict) -> str:
-    """The entry contents of a ``collection_write`` call, joined for a run record."""
-    entries = fields.get("entries") or []
-    return "; ".join(str(e.get("content", "")) for e in entries if isinstance(e, dict))
-
-
-# Per-tool compact renderers for a run record (see ``_render_call``).  A dispatch
-# table rather than an if/else ladder \u2014 add a tool by adding a row.
-_CALL_RENDERERS: dict[str, Callable[[dict], str]] = {
-    "collection_write": lambda f: f"write({f.get('memory', '?')}, {_write_contents(f)!r})",
-    "update_entry": lambda f: f"update({f.get('memory', '?')}, {f.get('key', '?')!r})",
-    "send_message": lambda f: f"send({f.get('content', '')!r})",
-    "browse": lambda f: f"browse({f.get('queries', list(f.values()))!r})",
-    "collection_move": lambda f: (
-        f"move({f.get('key', '?')!r}: {f.get('from_memory', '?')}\u2192{f.get('to_memory', '?')})"
-    ),
-}
-
-
-def _parse_tool_args(function: dict) -> object:
-    """Deserialize a stored tool call's ``arguments`` (a JSON string) to a dict.
-
-    Falls back to the raw string when the model emitted malformed JSON, so the
-    trace still shows what it tried rather than dropping the call.
-    """
-    raw = function.get("arguments")
-    if not isinstance(raw, str) or not raw:
-        return raw or {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
 
 
 class PromptPerf(NamedTuple):
@@ -87,18 +40,6 @@ class PromptPerf(NamedTuple):
     def tokens_per_second(self) -> float:
         seconds = self.duration_ms / 1000
         return self.output_tokens / seconds if seconds else 0.0
-
-
-class RunRecord(NamedTuple):
-    """One collector run rendered for the ``collector-runs`` log facade.
-
-    ``timestamp`` is the run's completion time (high-water for the read cursor);
-    ``content`` is the model-readable record — a ``[target] summary`` header
-    plus, for worked runs, the compact tool-call trace.
-    """
-
-    timestamp: datetime
-    content: str
 
 
 class MessageStore:
@@ -684,174 +625,6 @@ class MessageStore:
                     select(PromptLog).order_by(PromptLog.timestamp.desc()).limit(limit)
                 ).all()
             )
-
-    def collector_runs_since(self, cursor: datetime | None, limit: int) -> list[RunRecord]:
-        """The ``collector-runs`` log facade — runs as model-readable records.
-
-        ``collector-runs`` stores nothing of its own: it's a read-only view over
-        ``promptlog``, where every collector cycle already lives (``run_id``,
-        ``run_target``, ``run_outcome``/``run_reason``, and its tool calls).
-        Returns the runs after ``cursor`` (or the most-recent ``limit`` on a
-        first read), oldest-first, each rendered by :meth:`_render_run_record` —
-        so ``log_read`` over this log is the quality collector's run review.
-        """
-        with self._session() as session:
-            pairs = self._recent_run_ids(session, cursor, limit)
-            if not pairs:
-                return []
-            grouped = self._group_prompts(session, [run_id for run_id, _ in pairs])
-        return [
-            RunRecord(timestamp, self._render_run_record(grouped.get(run_id) or []))
-            for run_id, timestamp in pairs
-        ]
-
-    def collector_runs_window(self, window_seconds: int, limit: int) -> list[RunRecord]:
-        """Recent collector runs within a look-back window (chat-style read)."""
-        cutoff = datetime.now(UTC) - timedelta(seconds=window_seconds)
-        return self.collector_runs_since(cutoff, limit)
-
-    def collector_runs_for(
-        self, run_target: str | None, limit: int, offset: int
-    ) -> list[MemoryEntry]:
-        """Recent collector runs, newest-first, as records — backs the addon's
-        ``collector-runs`` views (``collector-runs`` is a facade over
-        ``promptlog``, so there are no stored entries to read).  ``run_target``
-        scopes to one collection's panel; ``None`` is every run (the log's own
-        entries view).  Each run is synthesized as a ``MemoryEntry`` (content =
-        the rendered record) so the existing entry-to-record serialization
-        applies unchanged."""
-        target_filter = (
-            PromptLog.run_target == run_target
-            if run_target is not None
-            else PromptLog.run_target.isnot(None)  # ty: ignore[unresolved-attribute]
-        )
-        with self._session() as session:
-            # Completion rows are the run index (one per run, partial-indexed),
-            # so this is a bounded ORDER BY ... LIMIT, not a GROUP BY scan.
-            recent = (
-                select(PromptLog.run_id, PromptLog.timestamp, PromptLog.id)
-                .where(
-                    PromptLog.run_outcome.isnot(None),  # ty: ignore[unresolved-attribute]
-                    target_filter,
-                )
-                .order_by(PromptLog.timestamp.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-            rows = list(session.exec(recent).all())
-            if not rows:
-                return []
-            grouped = self._group_prompts(session, [run_id for run_id, _, _ in rows])
-        return [
-            MemoryEntry(
-                id=last_id,
-                memory_name=PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
-                key=None,
-                content=self._render_run_record(grouped.get(run_id) or []),
-                author=PennyConstants.MessageAuthor.COLLECTOR,
-                created_at=timestamp,
-            )
-            for run_id, timestamp, last_id in rows
-        ]
-
-    @staticmethod
-    def _recent_run_ids(
-        session: Session, cursor: datetime | None, limit: int
-    ) -> list[tuple[str, datetime]]:
-        """``(run_id, completion_time)`` for recent COMPLETED collector runs,
-        oldest-first.
-
-        ``set_run_outcome`` stamps ``run_outcome`` on exactly one row per run
-        (its last prompt), so the completion rows ARE the run index — one row
-        per run, its timestamp the run's completion time.  Reading them directly
-        (served by the ``ix_promptlog_completed_runs`` partial index) is a
-        bounded ``ORDER BY ... LIMIT`` rather than a ``GROUP BY`` over the whole
-        table.  Excludes the reader's own in-progress run (outcome not yet
-        stamped), so quality never reviews itself mid-flight.  Collector runs
-        carry a ``run_target`` (the bound collection); chat turns don't."""
-        completed = select(PromptLog.run_id, PromptLog.timestamp).where(
-            PromptLog.run_outcome.isnot(None),  # ty: ignore[unresolved-attribute]
-            PromptLog.run_target.isnot(None),  # ty: ignore[unresolved-attribute]
-        )
-        if cursor is None:
-            recent = completed.order_by(PromptLog.timestamp.desc()).limit(limit)
-            rows = list(reversed(session.exec(recent).all()))
-        else:
-            recent = (
-                completed.where(PromptLog.timestamp > cursor)
-                .order_by(PromptLog.timestamp.asc())
-                .limit(limit)
-            )
-            rows = list(session.exec(recent).all())
-        return [(run_id, ts) for run_id, ts in rows if run_id is not None]
-
-    @staticmethod
-    def _group_prompts(session: Session, run_ids: list[str]) -> dict[str, list[PromptLog]]:
-        rows = session.exec(
-            select(PromptLog)
-            .where(PromptLog.run_id.in_(run_ids))  # ty: ignore[unresolved-attribute]
-            .order_by(PromptLog.timestamp.asc())
-        ).all()
-        grouped: dict[str, list[PromptLog]] = {}
-        for prompt in rows:
-            if prompt.run_id is not None:
-                grouped.setdefault(prompt.run_id, []).append(prompt)
-        return grouped
-
-    @staticmethod
-    def _run_outcome(prompts: list[PromptLog]) -> tuple[str | None, str | None, str | None]:
-        """Outcome/reason/target from the last prompt carrying them (like _serialize_run)."""
-        for p in reversed(prompts):
-            if p.run_outcome is not None or p.run_reason:
-                return p.run_outcome, p.run_reason, p.run_target
-        return None, None, prompts[0].run_target
-
-    @staticmethod
-    def _run_tool_calls(prompts: list[PromptLog]) -> list[tuple[str, object]]:
-        """Ordered (name, arguments) for every tool call across the run's prompts."""
-        calls: list[tuple[str, object]] = []
-        for p in prompts:
-            response = json.loads(p.response) if p.response else {}
-            for choice in response.get("choices", []):
-                message = choice.get("message") or {}
-                for tc in message.get("tool_calls") or []:
-                    function = tc.get("function") or {}
-                    calls.append((function.get("name") or "?", _parse_tool_args(function)))
-        return calls
-
-    @classmethod
-    def _render_run_record(cls, prompts: list[PromptLog]) -> str:
-        """One run as ``[target] summary`` + (for worked runs) its tool trace.
-
-        ``no_work`` / ``failed`` / ``cancelled`` runs render as just the header —
-        there's no behaviour to judge.  A worked run lists what it actually did
-        (the writes, the exact message it sent), so the quality collector can
-        weigh it against the collection's intent.  ``done()`` is omitted: its
-        summary *is* the header.  Content is never truncated."""
-        if not prompts:
-            return "[?] (no data)"
-        outcome, reason, target = cls._run_outcome(prompts)
-        header = f"[{target or '?'}] {reason or outcome or ''}".rstrip()
-        if outcome != RunOutcome.WORKED.value:
-            return header
-        lines = [header]
-        for name, args in cls._run_tool_calls(prompts):
-            if name == "done":
-                continue
-            lines.append(cls._render_call(name, args))
-        return "\n".join(lines)
-
-    @staticmethod
-    def _render_call(name: str, args: object) -> str:
-        """Compact, grokkable render of one tool call (the salient args only)."""
-        fields = cast("dict[str, Any]", args if isinstance(args, dict) else {})
-        renderer = _CALL_RENDERERS.get(name)
-        if renderer is not None:
-            return renderer(fields)
-        if name in _READ_TOOLS:
-            return f"read({fields.get('memory', '?')})"
-        rendered = ", ".join(f"{key}={value!r}" for key, value in fields.items())
-        return f"{name}({rendered or repr(args)})"
 
     def prompt_perf(self) -> PromptPerf:
         """Aggregate wall time + token usage across every logged prompt.

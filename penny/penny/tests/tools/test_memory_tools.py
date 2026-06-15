@@ -588,7 +588,9 @@ class TestLogTools:
             memory="collector-runs"
         )
 
-        assert "1 collector runs" in rendered
+        # collector-runs reads through the uniform log formatter now (it's a log
+        # facade like any other) — framed as a fetched batch, runs as records.
+        assert "from `collector-runs`" in rendered
         assert "[espresso-gear] sent an update about a grinder" in rendered
         assert "Found a new grinder, $300." in rendered  # the exact message, untruncated
 
@@ -938,7 +940,7 @@ class TestAuthorAttribution:
             db, _make_llm_client(mock_llm), author="preference-extractor"
         ).execute(memory="likes", entries=[{"key": "k", "content": "v"}])
 
-        rows = db.memories.get_entry("likes", "k")
+        rows = db.memory("likes").get("k")
         assert rows[0].author == "preference-extractor"
 
 
@@ -973,8 +975,8 @@ class TestCollectionMerge:
         assert "2 moved" in result
         assert "archived" in result
         assert db.memories.get("src").archived is True
-        assert len(db.memories.read_all("dst")) == 2
-        assert len(db.memories.read_all("src")) == 0
+        assert len(db.memory("dst").read_all()) == 2
+        assert len(db.memory("src").read_all()) == 0
 
     @pytest.mark.asyncio
     async def test_merge_drops_colliding_keys(self, tmp_path, mock_llm):
@@ -1006,7 +1008,7 @@ class TestCollectionMerge:
 
         assert "1 moved" in result
         assert "1 dropped" in result
-        dst_entries = db.memories.read_all("dst")
+        dst_entries = db.memory("dst").read_all()
         assert len(dst_entries) == 2
         contents = {e.key: e.content for e in dst_entries}
         assert contents["shared"] == "already in dst"  # destination wins
@@ -1174,7 +1176,7 @@ class TestScopedFactory:
 
         assert "Refused" in result and "likes" in result and "dislikes" in result
         # And nothing was actually written
-        assert db.memories.get_entry("dislikes", "k") == []
+        assert db.memory("dislikes").get("k") == []
 
     @pytest.mark.asyncio
     async def test_scoped_write_allows_target_collection(self, tmp_path, mock_llm):
@@ -1195,7 +1197,7 @@ class TestScopedFactory:
         result = await write.execute(memory="likes", entries=[{"key": "k", "content": "v"}])
 
         assert "Wrote 1 entry" in result
-        assert db.memories.get_entry("likes", "k")[0].content == "v"
+        assert db.memory("likes").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_update_entry_rejects_other_collection(self, tmp_path):
@@ -1235,7 +1237,7 @@ class TestScopedFactory:
         move = CollectionMoveTool(db, author="collector:dst", scope="dst")
         result = await move.execute(key="k", from_memory="src", to_memory="dst")
         assert "Moved 'k'" in result
-        assert db.memories.get_entry("dst", "k")[0].content == "v"
+        assert db.memory("dst").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_move_defaults_to_memory_from_scope(self, tmp_path, mock_llm):
@@ -1266,7 +1268,7 @@ class TestScopedFactory:
         move = CollectionMoveTool(db, author="collector:dst", scope="dst")
         result = await move.execute(key="k", from_memory="src")
         assert "Moved 'k'" in result
-        assert db.memories.get_entry("dst", "k")[0].content == "v"
+        assert db.memory("dst").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_move_to_memory_not_required_in_schema(self, tmp_path):

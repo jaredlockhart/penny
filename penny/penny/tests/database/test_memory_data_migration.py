@@ -148,10 +148,13 @@ def test_messages_split_into_user_and_penny_logs(tmp_path):
     migrate(db.db_path)
 
     # ``user-messages`` / ``penny-messages`` are read facades over ``messagelog``
-    # (the 0027 memory_entry replica is dropped by 0061), so read them through the
-    # store.  A message has two authors — the user (incoming) or Penny (outgoing).
-    user_rows = db.memories.read_all("user-messages")
-    penny_rows = db.memories.read_all("penny-messages")
+    # (the 0027 memory_entry replica is dropped by 0059), so read them through the
+    # facade.  A message has two authors — the user (incoming) or Penny (outgoing).
+    user_messages = db.memory("user-messages")
+    penny_messages = db.memory("penny-messages")
+    assert user_messages is not None and penny_messages is not None
+    user_rows = user_messages.read_all()
+    penny_rows = penny_messages.read_all()
 
     assert [(e.content, e.author) for e in user_rows] == [("hey penny", "user")]
     assert [(e.content, e.author) for e in penny_rows] == [

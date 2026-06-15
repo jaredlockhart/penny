@@ -22,9 +22,9 @@ import pytest
 from penny.config import Config
 from penny.constants import ChannelType
 from penny.database import Database
-from penny.database.memory_store import EntryInput, Inclusion, RecallMode
+from penny.database.memory import EntryInput, Inclusion, RecallMode
 from penny.database.message_store import PromptPerf
-from penny.database.models import Memory
+from penny.database.models import MemoryRow
 from penny.penny import Penny
 from penny.tests.conftest import TEST_SENDER, run_penny_with_server
 from penny.tests.eval.fixtures import SynthCollection
@@ -139,8 +139,7 @@ def seed_collection(
         collector_interval_seconds=interval,
         intent=intent,
     )
-    db.memories.write(
-        synth.name,
+    db.memory(synth.name).write(
         [EntryInput(key=entry.split(" — ")[0], content=entry) for entry in synth.entries],
         author="user",
     )
@@ -151,7 +150,7 @@ def collection_names(db: Database) -> set[str]:
     return {memory.name for memory in db.memories.list_all()}
 
 
-def new_collections(db: Database, before: set[str]) -> list[Memory]:
+def new_collections(db: Database, before: set[str]) -> list[MemoryRow]:
     """Collections that didn't exist before the run — what the model created."""
     return [memory for memory in db.memories.list_all() if memory.name not in before]
 
@@ -159,9 +158,9 @@ def new_collections(db: Database, before: set[str]) -> list[Memory]:
 def collection_entries(db: Database, name: str) -> dict[str, str]:
     """``{key: content}`` for every keyed entry in a collection — a snapshot a
     collector scorer compares before/after a cycle to detect writes/edits/deletes."""
-    return {
-        entry.key: entry.content for entry in db.memories.read_all(name) if entry.key is not None
-    }
+    memory = db.memory(name)
+    rows = memory.read_all() if memory is not None else []
+    return {entry.key: entry.content for entry in rows if entry.key is not None}
 
 
 def tool_was_called(db: Database, tool_name: str) -> bool:

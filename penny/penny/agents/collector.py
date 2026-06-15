@@ -36,7 +36,7 @@ from penny.agents.models import ControllerResponse
 from penny.config import Config
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
-from penny.database.models import Memory
+from penny.database.models import MemoryRow
 from penny.llm.client import LlmClient
 from penny.tools.base import Tool
 from penny.tools.browse import BrowseTool
@@ -127,7 +127,7 @@ class Collector(BackgroundAgent):
         # tool, the addon's "run extractor" button) call ``run_for`` off the
         # scheduler's cadence.  ``_cycle_lock`` serializes every cycle so
         # ``_current_target`` is never clobbered by an overlapping run.
-        self._current_target: Memory | None = None
+        self._current_target: MemoryRow | None = None
         self._cycle_lock = asyncio.Lock()
 
     def get_tools(self) -> list[Tool]:
@@ -203,7 +203,7 @@ class Collector(BackgroundAgent):
         captures = await runner.simulate(collection)
         return _summarize_dry_run(collection_name, captures)
 
-    async def _execute_cycle(self, collection: Memory) -> tuple[bool, str]:
+    async def _execute_cycle(self, collection: MemoryRow) -> tuple[bool, str]:
         """Run one full agent cycle bound to ``collection`` with audit cleanup.
 
         Owns the ``run_id`` so cleanup has the correct UUID even if
@@ -296,7 +296,7 @@ class Collector(BackgroundAgent):
             return RunOutcome.WORKED, summary
         return RunOutcome.NO_WORK, summary
 
-    def _apply_throttle(self, collection: Memory, outcome: RunOutcome) -> None:
+    def _apply_throttle(self, collection: MemoryRow, outcome: RunOutcome) -> None:
         """Auto-tune the collection's interval from this cycle's outcome.
 
         A ``worked`` cycle snaps the interval back to the user's set cadence
@@ -376,7 +376,7 @@ class Collector(BackgroundAgent):
         return self._compose_prompt(fresh)
 
     @classmethod
-    def _compose_prompt(cls, target: Memory) -> str:
+    def _compose_prompt(cls, target: MemoryRow) -> str:
         """Frame the user-authored extraction_prompt with target identity + runtime rules.
 
         The runtime-rules tail is appended structurally — not relayed through
@@ -397,7 +397,7 @@ class Collector(BackgroundAgent):
         """Pin entry mutations to the bound target collection."""
         return self._require_target().name
 
-    def _require_target(self) -> Memory:
+    def _require_target(self) -> MemoryRow:
         if self._current_target is None:
             raise RuntimeError(
                 "Collector tool surface accessed outside an execute() cycle "
@@ -407,7 +407,7 @@ class Collector(BackgroundAgent):
 
     # ── Dispatcher selection ──────────────────────────────────────────────
 
-    def _next_ready_collection(self) -> Memory | None:
+    def _next_ready_collection(self) -> MemoryRow | None:
         """Pick the most-overdue ready collection, or None if all caught up."""
         now = datetime.now(UTC)
         ready = [m for m in self.db.memories.list_all() if self._is_ready(m, now)]
@@ -416,7 +416,7 @@ class Collector(BackgroundAgent):
         return min(ready, key=self._overdue_sort_key)
 
     @staticmethod
-    def _is_ready(memory: Memory, now: datetime) -> bool:
+    def _is_ready(memory: MemoryRow, now: datetime) -> bool:
         if memory.archived or memory.extraction_prompt is None:
             return False
         if check_extraction_prompt(memory.extraction_prompt) is not None:
@@ -434,7 +434,7 @@ class Collector(BackgroundAgent):
         return elapsed >= interval
 
     @staticmethod
-    def _overdue_sort_key(memory: Memory) -> datetime:
+    def _overdue_sort_key(memory: MemoryRow) -> datetime:
         # Earliest last_collected_at runs first; never-collected sorts to the front.
         return (
             _aware(memory.last_collected_at)
@@ -558,7 +558,7 @@ class _DryRunCollector(Collector):
             )
         return tool
 
-    async def simulate(self, collection: Memory) -> list[_CapturedCall]:
+    async def simulate(self, collection: MemoryRow) -> list[_CapturedCall]:
         self._current_target = collection
         try:
             await self._run_cycle(uuid.uuid4().hex)

@@ -15,7 +15,7 @@ from penny.channels.browser.channel import BrowserChannel, ConnectionInfo
 from penny.config_params import RUNTIME_CONFIG_PARAMS, RuntimeParams
 from penny.constants import ChannelType, PennyConstants
 from penny.database import Database
-from penny.database.memory_store import EntryInput, Inclusion, LogEntryInput, RecallMode
+from penny.database.memory import EntryInput, Inclusion, LogEntryInput, RecallMode
 from penny.database.migrate import migrate
 from penny.database.models import Media, PromptLog, RuntimeConfig
 from penny.tests.conftest import wait_until
@@ -1392,8 +1392,7 @@ class TestBrowserMemoryHandlers:
             extraction_prompt="extract games",
             collector_interval_seconds=300,
         )
-        db.memories.write(
-            "board-games",
+        db.memory("board-games").write(
             [EntryInput(key="catan", content="Gateway strategy game")],
             author="user",
         )
@@ -1434,8 +1433,7 @@ class TestBrowserMemoryHandlers:
         db.memories.create_collection(
             "espresso-gear", "coffee equipment", Inclusion.RELEVANT, RecallMode.RELEVANT
         )
-        db.memories.write(
-            "espresso-gear",
+        db.memory("espresso-gear").write(
             [EntryInput(key="grinder", content="Niche Zero burr grinder")],
             author="test",
         )
@@ -1461,8 +1459,7 @@ class TestBrowserMemoryHandlers:
         db.memories.create_collection(
             "espresso-gear", "coffee", Inclusion.RELEVANT, RecallMode.RELEVANT
         )
-        db.memories.write(
-            "espresso-gear",
+        db.memory("espresso-gear").write(
             [
                 EntryInput(key="grinder", content="Niche Zero burr grinder"),
                 EntryInput(key="machine", content="Gaggia Classic espresso machine"),
@@ -1645,8 +1642,7 @@ class TestBrowserMemoryHandlers:
         received: list[str | None] = []
         db.memories._on_memory_changed = lambda name: received.append(name)
 
-        db.memories.write(
-            "board-games",
+        db.memory("board-games").write(
             [EntryInput(key="catan", content="A classic")],
             author="user",
         )
@@ -1654,16 +1650,16 @@ class TestBrowserMemoryHandlers:
         assert "board-games" in received
 
     def test_memory_changed_callback_fires_on_log_append(self, tmp_path):
-        """Log appends fire the callback too — the audit log lives behind it."""
+        """Log appends fire the callback too — a writable (non-facade) log."""
 
         _, db = self._channel(tmp_path)
-        # ``collector-runs`` is created by migration 0034.
+        db.memories.create_log("notes", "scratch log", Inclusion.ALWAYS, RecallMode.RECENT)
         received: list[str | None] = []
         db.memories._on_memory_changed = lambda name: received.append(name)
 
-        db.memories.append("collector-runs", [LogEntryInput(content="cycle x")], author="collector")
+        db.memory("notes").append([LogEntryInput(content="cycle x")], author="user")
 
-        assert "collector-runs" in received
+        assert "notes" in received
 
     # ── On-demand extractor trigger ──────────────────────────────────────
 
@@ -1832,7 +1828,7 @@ class TestBrowserMemoryHandlers:
                 "content": "Gateway strategy game",
             }
         )
-        entries = db.memories.read_latest("board-games")
+        entries = db.memory("board-games").read_latest()
         assert len(entries) == 1
         assert entries[0].key == "catan"
         assert entries[0].content == "Gateway strategy game"
@@ -1842,8 +1838,7 @@ class TestBrowserMemoryHandlers:
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
-        db.memories.write(
-            "board-games",
+        db.memory("board-games").write(
             [EntryInput(key="catan", content="old")],
             author="user",
         )
@@ -1855,19 +1850,18 @@ class TestBrowserMemoryHandlers:
                 "content": "Gateway strategy game, updated",
             }
         )
-        entries = db.memories.get_entry("board-games", "catan")
+        entries = db.memory("board-games").get("catan")
         assert entries[0].content == "Gateway strategy game, updated"
 
     def test_entry_delete_removes_row(self, tmp_path):
 
         channel, db = self._channel(tmp_path)
         db.memories.create_collection("board-games", "x", Inclusion.NEVER, RecallMode.RECENT)
-        db.memories.write(
-            "board-games",
+        db.memory("board-games").write(
             [EntryInput(key="catan", content="A classic")],
             author="user",
         )
         channel._handle_entry_delete(
             {"type": "entry_delete", "memory": "board-games", "key": "catan"}
         )
-        assert db.memories.get_entry("board-games", "catan") == []
+        assert db.memory("board-games").get("catan") == []

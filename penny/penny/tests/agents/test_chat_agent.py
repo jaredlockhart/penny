@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlmodel import Session, select
 
-from penny.database.memory_store import EntryInput, Inclusion, LogEntryInput, RecallMode
+from penny.database.memory import EntryInput, Inclusion, LogEntryInput, RecallMode
 from penny.database.models import MemoryEntry, MessageLog
 from penny.tests.conftest import TEST_SENDER, wait_until
 
@@ -73,28 +73,25 @@ async def test_basic_message_flow(
         penny.db.memories.create_collection(
             "playlists", "favorite playlists", Inclusion.ALWAYS, RecallMode.ALL
         )
-        penny.db.memories.write(
-            "playlists",
+        penny.db.memory("playlists").write(
             [EntryInput(key="morning", content="prog rock")],
             author="user",
         )
         penny.db.memories.create_log("tips", "useful tips", Inclusion.ALWAYS, RecallMode.RECENT)
-        penny.db.memories.append(
-            "tips", [LogEntryInput(content="tune before playing")], author="user"
+        penny.db.memory("tips").append(
+            [LogEntryInput(content="tune before playing")], author="user"
         )
         # Off and archived memories are seeded with entries so the verbatim
         # prompt assertion below proves they are filtered out of ambient recall.
         penny.db.memories.create_collection("secrets", "hidden", Inclusion.NEVER, RecallMode.RECENT)
-        penny.db.memories.write(
-            "secrets",
+        penny.db.memory("secrets").write(
             [EntryInput(key="do-not-share", content="classified")],
             author="user",
         )
         penny.db.memories.create_collection(
             "old-facts", "archived", Inclusion.ALWAYS, RecallMode.ALL
         )
-        penny.db.memories.write(
-            "old-facts",
+        penny.db.memory("old-facts").write(
             [EntryInput(key="stale", content="no longer relevant")],
             author="user",
         )
@@ -268,15 +265,15 @@ source URL so the user can follow up."""
         # The message logs are read facades over messagelog: the flow's
         # incoming/outgoing messages surface through read_all, with two
         # conversational authors — the user (incoming) or Penny (outgoing).
-        user_msg_entries = penny.db.memories.read_all("user-messages")
+        user_msg_entries = penny.db.memory("user-messages").read_all()
         assert any(e.content == "what's the weather like today?" for e in user_msg_entries)
         assert all(e.author == "user" for e in user_msg_entries)
 
-        penny_msg_entries = penny.db.memories.read_all("penny-messages")
+        penny_msg_entries = penny.db.memory("penny-messages").read_all()
         assert any("here's what i found" in e.content.lower() for e in penny_msg_entries)
         assert all(e.author == "penny" for e in penny_msg_entries)
 
-        browse_entries = penny.db.memories.read_all("browse-results")
+        browse_entries = penny.db.memory("browse-results").read_all()
         # Mock browse provider is wired in conftest; the tool was invoked once.
         assert len(browse_entries) >= 1
         assert all(e.author == "chat" for e in browse_entries)
@@ -311,8 +308,7 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
         penny.db.memories.create_collection(
             "trivia", "facts", Inclusion.RELEVANT, RecallMode.RELEVANT
         )
-        penny.db.memories.write(
-            "trivia",
+        penny.db.memory("trivia").write(
             [
                 EntryInput(
                     key="espresso",
@@ -722,12 +718,12 @@ def _write_embedded(db, name: str, key: str | None, content: str) -> None:
     """Write an entry with a deterministic content embedding."""
     vec = _hash_embed_vec(content)
     if key is None:
-        db.memories.append(
-            name, [LogEntryInput(content=content, content_embedding=vec)], author="test"
+        db.memory(name).append(
+            [LogEntryInput(content=content, content_embedding=vec)], author="test"
         )
     else:
-        db.memories.write(
-            name, [EntryInput(key=key, content=content, content_embedding=vec)], author="test"
+        db.memory(name).write(
+            [EntryInput(key=key, content=content, content_embedding=vec)], author="test"
         )
 
 
@@ -753,11 +749,11 @@ async def test_recall_recent_mode_renders_latest_entries(
         penny.db.memories.create_log(
             "conversation-test", "shared chat log", Inclusion.ALWAYS, RecallMode.RECENT
         )
-        penny.db.memories.append(
-            "conversation-test", [LogEntryInput(content="first message")], author="test"
+        penny.db.memory("conversation-test").append(
+            [LogEntryInput(content="first message")], author="test"
         )
-        penny.db.memories.append(
-            "conversation-test", [LogEntryInput(content="second message")], author="test"
+        penny.db.memory("conversation-test").append(
+            [LogEntryInput(content="second message")], author="test"
         )
 
         result = await penny.chat_agent._recall_section(current_message="anything")
@@ -775,13 +771,11 @@ async def test_recall_all_mode_renders_all_entries(
         penny.db.memories.create_collection(
             "playlists-test", "saved playlists", Inclusion.ALWAYS, RecallMode.ALL
         )
-        penny.db.memories.write(
-            "playlists-test",
+        penny.db.memory("playlists-test").write(
             [EntryInput(key="morning", content="prog rock")],
             author="test",
         )
-        penny.db.memories.write(
-            "playlists-test",
+        penny.db.memory("playlists-test").write(
             [EntryInput(key="evening", content="lo-fi")],
             author="test",
         )
@@ -1023,8 +1017,7 @@ async def test_recall_relevant_mode_without_embedding_client_returns_none(
         penny.db.memories.create_collection(
             "prefs-test", "user prefs", Inclusion.RELEVANT, RecallMode.RELEVANT
         )
-        penny.db.memories.write(
-            "prefs-test",
+        penny.db.memory("prefs-test").write(
             [EntryInput(key="coffee", content="loves coffee")],
             author="test",
         )
@@ -1044,8 +1037,7 @@ async def test_recall_off_mode_skipped(signal_server, mock_llm, test_config, run
         penny.db.memories.create_collection(
             "hidden-test", "not shown", Inclusion.NEVER, RecallMode.RECENT
         )
-        penny.db.memories.write(
-            "hidden-test",
+        penny.db.memory("hidden-test").write(
             [EntryInput(key="k", content="classified content")],
             author="test",
         )
@@ -1061,8 +1053,7 @@ async def test_recall_archived_memory_skipped(signal_server, mock_llm, test_conf
         penny.db.memories.create_collection(
             "old-test", "archived", Inclusion.ALWAYS, RecallMode.RECENT
         )
-        penny.db.memories.write(
-            "old-test",
+        penny.db.memory("old-test").write(
             [EntryInput(key="k", content="stale content")],
             author="test",
         )

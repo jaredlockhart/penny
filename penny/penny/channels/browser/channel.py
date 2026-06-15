@@ -100,7 +100,7 @@ from penny.channels.permission_manager import PermissionManager
 from penny.commands.schedule import ScheduleParseResult
 from penny.config_params import RUNTIME_CONFIG_PARAMS, get_params_by_group
 from penny.constants import ChannelType, PennyConstants
-from penny.database.memory_store import (
+from penny.database.memory import (
     EntryInput,
     Inclusion,
     MemoryAlreadyExistsError,
@@ -620,13 +620,19 @@ class BrowserChannel(MessageChannel):
             rows = self._collector_runs_for(memory, self._MEMORY_PAGE_SIZE, offset)
         elif memory.name == PennyConstants.MEMORY_COLLECTOR_RUNS_LOG:
             # The collector-runs log is itself a facade over promptlog — its
-            # "entries" are runs, not stored memory_entry rows.
-            rows = self._db.messages.collector_runs_for(
-                None, limit=self._MEMORY_PAGE_SIZE, offset=offset
+            # "entries" are runs (every collection's), not stored rows.
+            run_log = self._db.memories.run_log()
+            rows = (
+                run_log.newest_entries(self._MEMORY_PAGE_SIZE, offset)
+                if run_log is not None
+                else []
             )
         else:
-            rows = self._db.memories.read_latest(
-                memory.name, k=self._MEMORY_PAGE_SIZE, offset=offset, search=query
+            content = self._db.memory(memory.name)
+            rows = (
+                content.newest_entries(self._MEMORY_PAGE_SIZE, offset, search=query)
+                if content is not None
+                else []
             )
         records = [self._entry_to_record(row) for row in rows]
         return records, len(records) == self._MEMORY_PAGE_SIZE
@@ -635,12 +641,13 @@ class BrowserChannel(MessageChannel):
         """Newest-first ``collector-runs`` for this collection.
 
         ``collector-runs`` is a read facade over ``promptlog`` (no stored
-        entries), so the runs come from there, filtered to this collection's
-        ``run_target`` and rendered as records.  Empty for logs (collectors
-        only target collections)."""
+        entries), so the runs come from the ``RunLog`` scoped to this
+        collection's ``run_target``, rendered as records.  Empty for logs
+        (collectors only target collections)."""
         if memory.type != "collection":
             return []
-        return self._db.messages.collector_runs_for(memory.name, limit=limit, offset=offset)
+        run_log = self._db.memories.run_log(target=memory.name)
+        return run_log.newest_entries(limit, offset) if run_log is not None else []
 
     def _cursors_for(self, memory) -> list[CursorRecord]:
         """The collection's read positions over the logs it reads, oldest log
@@ -796,9 +803,12 @@ class BrowserChannel(MessageChannel):
         except ValidationError:
             logger.warning("Invalid entry_create: %s", str(data)[:200])
             return
+        memory = self._db.memory(req.memory)
+        if memory is None:
+            logger.warning("entry_create on missing memory %s", req.memory)
+            return
         try:
-            self._db.memories.write(
-                req.memory,
+            memory.write(
                 [EntryInput(key=req.key, content=req.content)],
                 author=self._ADDON_ENTRY_AUTHOR,
             )
@@ -812,10 +822,12 @@ class BrowserChannel(MessageChannel):
         except ValidationError:
             logger.warning("Invalid entry_update: %s", str(data)[:200])
             return
+        memory = self._db.memory(req.memory)
+        if memory is None:
+            logger.warning("entry_update on missing memory %s", req.memory)
+            return
         try:
-            self._db.memories.update(
-                req.memory, req.key, req.content, author=self._ADDON_ENTRY_AUTHOR
-            )
+            memory.update(req.key, req.content, author=self._ADDON_ENTRY_AUTHOR)
         except MemoryTypeError as exc:
             logger.warning("entry_update on non-collection %s: %s", req.memory, exc)
 
@@ -826,8 +838,12 @@ class BrowserChannel(MessageChannel):
         except ValidationError:
             logger.warning("Invalid entry_delete: %s", str(data)[:200])
             return
+        memory = self._db.memory(req.memory)
+        if memory is None:
+            logger.warning("entry_delete on missing memory %s", req.memory)
+            return
         try:
-            self._db.memories.delete(req.memory, req.key)
+            memory.delete(req.key)
         except MemoryTypeError as exc:
             logger.warning("entry_delete on non-collection %s: %s", req.memory, exc)
 

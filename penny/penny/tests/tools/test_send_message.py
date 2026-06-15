@@ -18,7 +18,7 @@ import pytest
 
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import Inclusion, RecallMode
+from penny.database.memory import Inclusion, RecallMode
 from penny.tools.send_message import SendMessageTool, _appears_truncated
 
 _PENNY_LOG = PennyConstants.MEMORY_PENNY_MESSAGES_LOG

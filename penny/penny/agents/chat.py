@@ -17,8 +17,8 @@ from penny.agents.base import Agent
 from penny.agents.models import ControllerResponse
 from penny.channels.base import PageContext
 from penny.constants import ChatPromptType, PennyConstants
-from penny.database.memory_store import Inclusion, MemoryType, RecallMode
-from penny.database.models import Memory, MemoryEntry
+from penny.database.memory import Inclusion, Memory, RecallMode
+from penny.database.models import MemoryEntry
 from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -258,10 +258,15 @@ class ChatAgent(Agent):
         Stage 2 (entry rendering) — for each included memory, its ``recall``
         mode picks which entries surface:
 
-          recent   — newest-first slice (``read_latest``)
-          relevant — hybrid cosine+lexical ranking over the conversation
-                     window (``read_similar_hybrid``; skipped without embedding)
-          all      — full set in insertion order (``read_all``)
+          recent   — newest-first slice (``memory.newest_entries``)
+          relevant — hybrid cosine+lexical ranking over the conversation window
+                     (``memory.read_similar_hybrid``; skipped without embedding)
+          all      — full set in insertion order (``memory.read_all``)
+
+        Each memory is a polymorphic ``Memory`` object from
+        ``db.memories.active_memories()`` — the renderers call methods on it and
+        log-only behaviour (temporal-neighbor expansion) is the object's own
+        override, so this path never branches on the memory's shape.
         """
         anchors = await self._embed_conversation_anchors(current_message, conversation_history)
         anchor_contents = self._anchor_contents(current_message, conversation_history)
@@ -280,12 +285,8 @@ class ChatAgent(Agent):
         return "\n\n".join(sections) if sections else None
 
     def _active_memories(self) -> list[Memory]:
-        """Non-archived memories that are routable (inclusion != 'never')."""
-        return [
-            m
-            for m in self.db.memories.list_all()
-            if not m.archived and m.inclusion != Inclusion.NEVER
-        ]
+        """Memory objects for every non-archived, routable memory (inclusion != 'never')."""
+        return self.db.memories.active_memories()
 
     def _passes_inclusion(self, memory: Memory, anchors: list[list[float]] | None) -> bool:
         """Stage-1 gate: does this memory participate in recall for this turn.
@@ -369,11 +370,11 @@ class ChatAgent(Agent):
         """Dispatch to the correct renderer for a single memory's recall mode."""
         mode = RecallMode(memory.recall)
         if mode == RecallMode.RECENT:
-            entries = self.db.memories.read_latest(memory.name, k=limit)
+            entries = memory.newest_entries(k=limit)
         elif mode == RecallMode.RELEVANT:
             entries = self._relevant_entries(memory, anchors, query_text, limit, anchor_contents)
         elif mode == RecallMode.ALL:
-            entries = self.db.memories.read_all(memory.name)[:limit]
+            entries = memory.read_all()[:limit]
         else:
             return None
         if not entries:
@@ -404,17 +405,15 @@ class ChatAgent(Agent):
         """
         if not anchors:
             return []
-        hits = self.db.memories.read_similar_hybrid(
-            memory.name,
+        hits = memory.read_similar_hybrid(
             anchors,
             query_text,
             k=limit,
             exclude_contents=anchor_contents or None,
         )
-        if not hits or memory.type != MemoryType.LOG.value:
-            return hits
-        return self.db.memories.expand_with_temporal_neighbors(
-            memory.name,
+        # Collections return their hits unchanged; logs expand each hit with its
+        # surrounding conversation (the polymorphic no-op vs. override).
+        return memory.expand_with_temporal_neighbors(
             hits,
             PennyConstants.MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES,
         )

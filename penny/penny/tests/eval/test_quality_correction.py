@@ -28,7 +28,7 @@ import pytest
 
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
-from penny.database.memory_store import Inclusion, RecallMode
+from penny.database.memory import Inclusion, RecallMode
 from penny.tests.eval.conftest import CollectorScorer, tool_was_called
 
 pytestmark = pytest.mark.eval

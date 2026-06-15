@@ -196,15 +196,20 @@ class Knowledge(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class Memory(SQLModel, table=True):
-    """A named memory — either a keyed collection or an append-only log.
+class MemoryRow(SQLModel, table=True):
+    """A named memory's persisted metadata — a keyed collection or an
+    append-only log.
 
-    Memories are Penny's unified data primitive: user- or system-authored
-    containers that agents read from and write to via tools.  Two orthogonal
-    flags control how a memory feeds the chat agent's ambient recall, in two
-    stages: ``inclusion`` decides whether the memory participates at all
-    (collection routing), and ``recall`` decides which of its entries surface
-    once included (entry rendering).
+    The stored row behind a :class:`penny.database.memory.Memory` object: its
+    name, shape (``type``), routing flags, collector cadence, and intent.  The
+    polymorphic ``Memory`` wraps one of these and adds the read/write behaviour;
+    the facades (messages, collector-runs) wrap a marker row but read their
+    canonical tables.
+
+    Two orthogonal flags control how a memory feeds the chat agent's ambient
+    recall, in two stages: ``inclusion`` decides whether the memory participates
+    at all (collection routing), and ``recall`` decides which of its entries
+    surface once included (entry rendering).
     """
 
     __tablename__ = "memory"

@@ -165,15 +165,17 @@ class SendMessageTool(Tool):
 
     def _latest_send_time(self) -> datetime | None:
         """Created-at of Penny's most recent outgoing message."""
-        entries = self._db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG, k=1)
+        log = self._db.memory(PennyConstants.MEMORY_PENNY_MESSAGES_LOG)
+        entries = log.newest_entries(k=1) if log is not None else []
         return entries[0].created_at if entries else None
 
     def _count_sends_since_user_message(self) -> int:
         """Number of Penny's outgoing messages newer than the latest user message."""
         latest_user = self._latest_user_message_time()
         cutoff = _to_naive(latest_user) if latest_user is not None else None
+        log = self._db.memory(PennyConstants.MEMORY_PENNY_MESSAGES_LOG)
         count = 0
-        for entry in self._db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG):
+        for entry in log.newest_entries() if log is not None else []:
             if cutoff is not None and _to_naive(entry.created_at) <= cutoff:
                 break
             count += 1
@@ -181,7 +183,8 @@ class SendMessageTool(Tool):
 
     def _latest_user_message_time(self) -> datetime | None:
         """Created-at of the most recent ``user-messages`` entry."""
-        entries = self._db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1)
+        log = self._db.memory(PennyConstants.MEMORY_USER_MESSAGES_LOG)
+        entries = log.newest_entries(k=1) if log is not None else []
         return entries[0].created_at if entries else None
 
 

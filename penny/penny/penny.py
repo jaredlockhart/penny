@@ -487,7 +487,8 @@ class Penny:
                 return
 
             # Only announce if the user has chatted before (not a fresh profile)
-            if not self.db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1):
+            user_messages = self.db.memory(PennyConstants.MEMORY_USER_MESSAGES_LOG)
+            if user_messages is None or not user_messages.newest_entries(k=1):
                 logger.info("No message history yet, skipping startup announcement")
                 return
 
