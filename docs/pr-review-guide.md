@@ -31,10 +31,12 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] All imports are at the top of the file — no inline/inner imports inside functions or methods
 - [ ] If a circular import exists, the fix is to move the shared type to a common location (e.g., `base.py`), not to defer the import
 - [ ] `TYPE_CHECKING` guards are only used for type-only imports that would cause real circular dependency at runtime
+- [ ] **An inner import is justified ONLY to break a *verified* runtime cycle.** Before accepting one, check that the cycle is real: if the imported symbol's module has no heavy/cyclic dependencies (a `types.py` of enums/errors, say) and is — or could be — imported at the top of the file without a cycle, the inner import is unjustified indirection; hoist it. "It's only used in one method" is not a reason to bury an import inside that method
 
 ### Dead Code
 - [ ] No unused constants, variables, methods, or imports left behind after changes
 - [ ] Follow the chain — if removing a method, also remove constants it was the only consumer of
+- [ ] Follow the chain in BOTH directions — when you delete the only *producer* of a value, its type/`NamedTuple`/helper and every re-export of it are now dead too (deleting the method that built a `RunRecord` makes `RunRecord`, its import, and its `__all__` entry dead). A symbol kept "just in case" after its sole caller or sole producer is gone is dead code — remove it
 - [ ] No `del param` statements at the top of a function/method body to "consume" an unused argument — this is dead-code dressing for a linter, not real code. If a parameter is genuinely unused but required by the override signature (e.g., parent class contract), document *why* in the docstring and leave the parameter alone. If the parameter isn't required, remove it from the signature
 
 ### Optional Values
@@ -70,9 +72,39 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] Don't question or investigate whether runtime_config values are "taking effect" — if a value exists in the DB, the user put it there intentionally
 - [ ] Never use RuntimeConfig to store application state (watermarks, cursors, progress trackers) — derive state from the relevant domain table's timestamps and foreign keys
 
+### Data-Source Refactors (Replica → Facade, Table Moves, Row Deletes)
+- [ ] When you change where data is read from, or delete rows in a migration, enumerate EVERY reader and migrate all of them: the model-facing tool, the addon/UI, recall, background cron, tests. A facade wired into one consumer leaves the others reading the now-empty source — and the suite stays green if those consumers have no test
+- [ ] A read facade over a canonical table routes ALL of the base's read paths (`read_latest`/`read_since`/`read_recent`/`read_all`/`_embedded_rows`/counts) through the overridden source. Prefer overriding the low-level row primitives so every higher-level read inherits the new backing — a partially-overridden facade returns correct data on some methods and empty/stale on others
+- [ ] A read view over a live append-only table filters to a completion sentinel (e.g. an outcome stamp) so it never surfaces in-flight rows — especially when the reader is also one of the writers (it must not act on its own partial run)
+- [ ] The write path populates what the read path needs; a startup/periodic backfill is for historical rows only. If the write path already computes a value (an embedding computed for another purpose), persist it there — don't discard it and lean on the next restart's backfill, or the read path is stale for the whole interval
+- [ ] A read-only facade over a canonical table has NO write path of its own: its `append`/`write` raises (e.g. `ReadOnlyMemoryError`), and tests/fixtures seed the *canonical* table directly (e.g. `log_message` for a messages facade, a `promptlog` run for a runs facade) — never the facade. A facade write that silently no-ops, or writes the wrong table, is a bug
+- [ ] Dispatch that resolves a name to its facade/object depends on the registry/marker row existing — so the facade rows seeded by migrations in prod must also be seeded in any test that resolves them. `db.memory("user-messages")` returns `None` if the marker row is absent, and the call chain then `None`-dereferences or silently no-ops
+
+### SQLModel Table Renames
+- [ ] Renaming a `table=True` SQLModel class silently renames the physical table — and breaks every FK and every migration's `UPDATE`/`DELETE` target — unless `__tablename__` is pinned to the original name. Pin it whenever you rename the class but not the table
+
 ---
 
-## 3. Architecture and Design
+## 3. Query Efficiency and Performance
+
+### Push Work Into SQL — Don't Materialize Then Paginate
+- [ ] Filtering, pagination, cursors, and "latest N" go into the query (WHERE / ORDER BY / LIMIT / `since`), never materialize a whole table (or a whole partition of one) and slice/filter/break in Python
+- [ ] `read_latest(k=1)` must issue `LIMIT 1` — not fetch every row and take `[0]`
+- [ ] Red flag: `for row in store.read_all(): if <cond>: break` when only rows since a cursor are needed → use a `read_since(cursor)`-style bounded query. The early `break` saves iteration, not the fetch — the full result set is already in memory
+- [ ] This does NOT conflict with "never invent limits" (Forbidden Patterns): a `LIMIT` that honors a caller's explicit `k` / page-size / cursor is correct; an *invented* cap the caller never asked for is the forbidden one
+
+### Index Every Filter and Sort on a Growing Table
+- [ ] Every WHERE column and ORDER BY column on an unbounded table (`messagelog`, `promptlog`, `memory_entry`) is index-backed — check `models.py` for `index=True` or a composite `__table_args__`
+- [ ] A filter/sort on an unindexed column is a full scan that grows with history — flag it
+- [ ] Leading-wildcard `LIKE '%x%'` cannot use an index — acceptable only for on-demand, bounded searches (addon entry search), never on a hot path
+- [ ] Loading the full embedded corpus for vector/similarity search is expected (SQLite has no ANN index) — but a cooldown probe, a "latest one" lookup, or a count must be a bounded query, not a corpus load
+
+### Aggregate and Detail Must Agree
+- [ ] A count (inventory) and a listing (detail) derived from the same data use equivalent predicates, so the number shown matches what a read returns
+
+---
+
+## 4. Architecture and Design
 
 ### Python-Space Over Model-Space
 - [ ] Deterministic actions (posting comments, creating labels, validating output) are handled in Python code, not delegated to the LLM
@@ -99,6 +131,18 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] New modes = new class, no touching the pipeline
 - [ ] Preferred over if/else chains, flag-based toggling, or deep class hierarchies
 
+### Polymorphic Dispatch Over Scattered Type Checks
+- [ ] When behavior depends on a runtime name / type / shape, resolve it ONCE through a single dispatch to the right object (e.g. `db.memory(name)` returns a `Collection`, `Log`, or a facade), and have every caller call methods on that object. Don't repeat `if name in SOME_SET` / `if obj.type == X` at each call site, and don't scatter the same branch inside every method of a shared store/access layer
+- [ ] The "facade" / variant behaviour belongs in **a class per variant** that overrides the operations — not as conditionals threaded through the callers and the access layer. A tool, recall path, or UI handler should never branch on the name or shape of the thing it was handed; the object encapsulates that
+- [ ] Operations that don't apply to a variant refuse via a base-class no-op that raises a typed error — not by callers checking the type first (this is "No getattr Duck Typing" applied to dispatch: the base defines every op, each variant overrides the ones it supports)
+- [ ] Put shared logic as high in the hierarchy as it goes (the common backing on the base; only the genuinely different variants override) — and don't manufacture empty pass-through subclasses for variants that add nothing over the base
+- [ ] Smell: the same `if name == "X"` / `if isinstance(...)` / `if obj.type == ...` appears in more than one method or more than one caller → introduce the dispatch + polymorphic classes and delete every copy of the conditional
+
+### Hoist Cross-Cutting Entrypoint Boilerplate Into a Base Template
+- [ ] When N sibling classes repeat the same wrapper in their public entrypoint — the same `try/except → return str(exc)`, the same up-front validation, the same result framing — hoist it into a base class whose entrypoint (`execute`) wraps an abstract hook (`_run`) the subclasses implement. The cross-cutting concern is authored once; each subclass contains only its distinct body
+- [ ] This is the template-method pattern applied to *boilerplate* (distinct from applying it to variant building blocks). Smell: the identical try/except or guard appears verbatim at the top or bottom of every subclass's `execute`
+- [ ] Only the subclasses that actually share the concern inherit the base — don't force-fit siblings that don't (a tool that resolves+operates on a memory belongs on `MemoryTool`; one that does neither stays on plain `Tool`)
+
 ### No Client-Server Duplication
 - [ ] Transformations exist in exactly one place — if the server does markdown-to-HTML, don't reimplement in the client
 - [ ] Before writing a transformation, check if it already exists elsewhere
@@ -121,7 +165,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 
 ---
 
-## 4. Error Handling
+## 5. Error Handling
 
 ### Narrow Exceptions
 - [ ] Catch the exact exception type expected (`asyncio.CancelledError`, `TimeoutError`, etc.)
@@ -137,6 +181,16 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] Never write catch blocks that silently swallow errors and fall through to a "fallback" implementation
 - [ ] If a primary path fails, it must fail loudly (log the error, return an error state)
 - [ ] Multiple strategies must be independently tested and selection must be explicit, not error-driven
+
+### Errors Are Exceptions, Not Foreign-Typed Sentinel Returns
+- [ ] A function that can fail raises a typed exception — it does NOT return `T | str` (the `str` being an error message) or any union that mixes an error sentinel of a *different type* into the success channel. The success value is unusable until every caller discriminates it, so the sentinel just pushes a type check onto each call site
+- [ ] Smell: `x = resolve(...); if isinstance(x, str): return x` repeated at many call sites → `resolve` should raise, and the callers (or a shared base) catch it once
+- [ ] A `None` return for "absent" is fine when absence is an ordinary, expected outcome handled inline; it is NOT fine as a stand-in for an error that carries a message — that's an exception
+
+### Exceptions Self-Render and Share a Catchable Base
+- [ ] Every exception in a family carries its data in `__init__` AND renders its own complete, surface-ready message via `str(self)`. Don't make one exception contain the whole message while a sibling carries only a bare name that each caller has to wrap in a format string — the handling should be uniformly `return str(exc)` for all of them
+- [ ] Related exceptions that callers handle the same way share a base class, so one `except Base` (or a single tuple) covers them in one place — instead of a separate `except` + custom message per subclass scattered across callers
+- [ ] Why: when the message lives in the exception it's authored once and stays consistent at every catch site; when it lives at the catch site, the same error renders different (and drifting) text depending on who caught it. Keep a subclass relationship that preserves existing `except` callers (e.g. a shape error that subclasses the broader type error those callers already catch)
 
 ### Verify Primary Path First
 - [ ] Never write fallback/alternative code paths before verifying the primary path works with real output
@@ -155,7 +209,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 
 ---
 
-## 5. Testing
+## 6. Testing
 
 ### Test Invocation
 - [ ] Tests run ONLY via `make fix check 2>&1 | tee /tmp/check-output.txt; echo "EXIT_CODE=$pipestatus[1]" >> /tmp/check-output.txt`
@@ -198,7 +252,7 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 
 ---
 
-## 6. Prompt Engineering
+## 7. Prompt Engineering
 
 ### System Prompt Structure
 - [ ] Consistent `##` / `###` header hierarchy to delineate sections
@@ -223,9 +277,12 @@ A comprehensive checklist for reviewing pull requests against the project's esta
 - [ ] When investigating prompt issues, check the `thinking` field in the `promptlog` table
 - [ ] Search for keywords: "conflict", "but the instructions say", "contradicts", "wait,", "not sure if"
 
+### Renamed/Removed Tools Leave No Dangling Model-Facing References
+- [ ] When deleting or renaming a tool/capability, grep model-facing strings for the old name: tool descriptions, returned error/refusal messages, and stored `extraction_prompt`s (in migrations). A dangling reference points the model at a tool that no longer exists — it silently follows a dead pointer. A code-symbol grep is not enough; the string is the bug
+
 ---
 
-## 7. Forbidden Patterns
+## 8. Forbidden Patterns
 
 These patterns have each caused production bugs or wasted days of debugging. Flag them immediately.
 
@@ -286,7 +343,7 @@ This is the single most recurring source of production bugs in this project. It 
 
 ---
 
-## 8. Async Patterns
+## 9. Async Patterns
 
 - [ ] `asyncio.Queue` with worker for serialization, not `asyncio.Lock`
 - [ ] Pass dependencies directly to async tasks — don't fish from shared dicts
@@ -295,7 +352,7 @@ This is the single most recurring source of production bugs in this project. It 
 
 ---
 
-## 9. Browser Extension (TypeScript)
+## 10. Browser Extension (TypeScript)
 
 - [ ] Related content rendered in the same DOM container — not as separate siblings in scrollable lists
 - [ ] No client-side reimplementation of server-side transformations
@@ -306,7 +363,7 @@ This is the single most recurring source of production bugs in this project. It 
 
 ---
 
-## 10. Git and Workflow
+## 11. Git and Workflow
 
 - [ ] All changes go through PRs — never push directly to `main`
 - [ ] Feature branches created from latest `main` (`git checkout main && git pull origin main` first)
@@ -318,7 +375,7 @@ This is the single most recurring source of production bugs in this project. It 
 
 ---
 
-## 11. Similarity and Embedding Code
+## 12. Similarity and Embedding Code
 
 - [ ] All similarity logic lives in the `similarity/` package — agents don't implement their own
 - [ ] `similarity/embeddings.py`: Pure math (cosine similarity, TCR, serialize/deserialize)
@@ -326,7 +383,7 @@ This is the single most recurring source of production bugs in this project. It 
 
 ---
 
-## 12. Response Style
+## 13. Response Style
 
 - [ ] Sentence case for all Penny response strings ("Okay, I'll learn more about {topic}")
 - [ ] Markdown tables converted to bullet points in Python (saves model tokens)
@@ -358,3 +415,16 @@ If you see any of these in a PR, flag immediately:
 | `try: ... except: <fallback code>` | Primary must fail loudly, not silently fall through |
 | `field: str = ""` on Pydantic model | Use `str \| None = None` |
 | CDN link for CSS/JS/fonts | Bundle locally |
+| `for x in store.read_all(): … break` | Loads whole table into memory then paginates in Python — push the filter into SQL |
+| WHERE/ORDER BY on a column with no `index=True` | Full scan that grows with history |
+| Renaming a `table=True` SQLModel class without `__tablename__` | Silently renames the physical table → breaks FKs and every migration's `UPDATE`/`DELETE` target |
+| Facade/view that overrides only *some* read methods | Returns correct data on some calls, empty on others |
+| Value computed on write path but only persisted by a backfill | Read path stale until next restart |
+| Renamed/removed tool still named in a tool description or stored prompt | Model follows a dead pointer to a tool that no longer exists |
+| `if name in SET:` / `if obj.type == X:` repeated across methods or callers | Scatter-branching on type/shape — dispatch once to a polymorphic object, delete the conditionals |
+| `x = f(...); if isinstance(x, str): return x` | Error returned as a foreign-typed sentinel — raise a typed exception and catch it |
+| Exception caught then wrapped in `f"... {name} ..."` while a sibling self-renders | Make the exception render its own message; handle uniformly via `str(exc)` |
+| Same `try/except: return str(exc)` (or guard) at the top of every subclass `execute` | Hoist into a base template method that wraps an abstract `_run` |
+| `from foo import Bar` inside a method when there's no real cycle | Inner import only for a *verified* runtime cycle — else hoist to top |
+| Read-only facade with a write/`append` that no-ops instead of raising | Facade has no write path — raise; seed the canonical table in tests |
+| Type/`NamedTuple`/re-export kept after its only producer was deleted | Dead code — follow the chain in both directions |
