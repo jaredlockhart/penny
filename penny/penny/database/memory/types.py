@@ -48,7 +48,17 @@ class RecallMode(StrEnum):
     ALL = "all"
 
 
-class MemoryTypeError(Exception):
+class MemoryAccessError(Exception):
+    """A memory operation refused at the tool boundary — the memory is missing,
+    the wrong shape for the op, or a read-only facade.
+
+    ``str(self)`` is the model-readable reason, which the tool layer returns
+    verbatim.  Catching this one base handles all three refusals uniformly, so a
+    tool doesn't need a per-call type check or a sentinel return value.
+    """
+
+
+class MemoryTypeError(MemoryAccessError):
     """Raised when an operation is called against the wrong memory type."""
 
 
@@ -69,7 +79,7 @@ class WrongShapeError(MemoryTypeError):
         self.shape = shape
 
 
-class ReadOnlyMemoryError(Exception):
+class ReadOnlyMemoryError(MemoryAccessError):
     """Raised when a write is attempted against a derived read-only facade.
 
     ``user-messages`` / ``penny-messages`` / ``collector-runs`` are views over
@@ -77,8 +87,17 @@ class ReadOnlyMemoryError(Exception):
     """
 
 
-class MemoryNotFoundError(Exception):
-    """Raised when an operation targets a memory that doesn't exist."""
+class MemoryNotFoundError(MemoryAccessError):
+    """Raised when an operation targets a memory that doesn't exist.
+
+    Carries the ``name`` and renders a readable message, so a tool can surface
+    ``str(self)`` directly (``db.memory(name)`` returning ``None`` becomes this
+    via ``_resolve``).
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Memory '{name}' not found.")
+        self.name = name
 
 
 class MemoryAlreadyExistsError(Exception):

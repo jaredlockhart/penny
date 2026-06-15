@@ -29,12 +29,11 @@ from penny.database.memory import (
     Inclusion,
     LogEntryInput,
     Memory,
+    MemoryAccessError,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
-    ReadOnlyMemoryError,
     RecallMode,
     WriteResult,
-    WrongShapeError,
 )
 from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
@@ -107,17 +106,18 @@ def _format_entries(
     return f"{len(entries)} {noun} from `{source}`{suffix}:\n{body}"
 
 
-def _resolve(db: Database, name: str) -> Memory | str:
-    """The ``Memory`` object for ``name``, or a readable 'not found' string.
+def _resolve(db: Database, name: str) -> Memory:
+    """The ``Memory`` object for ``name``; raises ``MemoryNotFoundError`` when it
+    doesn't exist.
 
-    The single dispatch every content tool funnels through — the tool then calls
-    a method on the returned object and lets it refuse (``WrongShapeError`` /
-    ``ReadOnlyMemoryError``) any op that doesn't fit the memory's shape.  No tool
-    branches on the name or shape itself.
+    The single dispatch every content tool funnels through.  A tool wraps its
+    resolve + op in one ``try`` and returns ``str(exc)`` for any
+    ``MemoryAccessError`` — missing (here), wrong shape, or read-only (raised by
+    the object) — so there's no per-call type check and no sentinel return.
     """
     memory = db.memory(name)
     if memory is None:
-        return f"Memory '{name}' not found."
+        raise MemoryNotFoundError(name)
     return memory
 
 
@@ -453,12 +453,9 @@ class CollectionGetTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = CollectionGetArgs(**kwargs)
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            rows = memory.get(args.key)
-        except WrongShapeError as exc:
+            rows = _resolve(self._db, args.memory).get(args.key)
+        except MemoryAccessError as exc:
             return str(exc)
         if not rows:
             return f"Key '{args.key}' not found in '{args.memory}'."
@@ -492,12 +489,9 @@ class CollectionReadLatestTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLatestArgs(**kwargs)
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            entries = memory.read_latest(args.k)
-        except WrongShapeError as exc:
+            entries = _resolve(self._db, args.memory).read_latest(args.k)
+        except MemoryAccessError as exc:
             return str(exc)
         return _format_entries(entries, source=args.memory, ordering="most recent first")
 
@@ -521,12 +515,9 @@ class CollectionReadRandomTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadRandomArgs(**kwargs)
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            entries = memory.read_random(args.k)
-        except WrongShapeError as exc:
+            entries = _resolve(self._db, args.memory).read_random(args.k)
+        except MemoryAccessError as exc:
             return str(exc)
         return _format_entries(entries, source=args.memory, ordering="random sample")
 
@@ -567,10 +558,10 @@ class ReadSimilarTool(Tool):
                 "%s: similarity search unavailable — no embedding model configured", self.name
             )
             return "(similarity search unavailable — no embedding model configured)"
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
-        entries = memory.read_similar(vec, args.k)
+        try:
+            entries = _resolve(self._db, args.memory).read_similar(vec, args.k)
+        except MemoryAccessError as exc:
+            return str(exc)
         return _format_entries(entries, source=args.memory, ordering="most relevant first")
 
 
@@ -590,12 +581,9 @@ class CollectionKeysTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            keys = memory.keys()
-        except WrongShapeError as exc:
+            keys = _resolve(self._db, args.memory).keys()
+        except MemoryAccessError as exc:
             return str(exc)
         if not keys:
             return "(no keys)"
@@ -663,13 +651,11 @@ class CollectionWriteTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
-        entries = [await self._build_entry(spec) for spec in args.entries]
         try:
+            memory = _resolve(self._db, args.memory)
+            entries = [await self._build_entry(spec) for spec in args.entries]
             results = memory.write(entries, author=self._author)
-        except WrongShapeError as exc:
+        except MemoryAccessError as exc:
             return str(exc)
         return self._format_results(args.memory, results)
 
@@ -747,12 +733,9 @@ class UpdateEntryTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            outcome = memory.update(args.key, args.content, self._author)
-        except WrongShapeError as exc:
+            outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)
+        except MemoryAccessError as exc:
             return str(exc)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
@@ -994,12 +977,10 @@ class CollectionMoveTool(Tool):
                 f"Refused: this collector can only write to '{self._scope}', "
                 f"not '{args.to_memory}'."
             )
-        source = _resolve(self._db, args.from_memory)
-        if isinstance(source, str):
-            return source
         try:
+            source = _resolve(self._db, args.from_memory)
             outcome = source.move(args.key, args.to_memory, author=self._author)
-        except WrongShapeError as exc:
+        except MemoryAccessError as exc:
             return str(exc)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.from_memory}'."
@@ -1038,10 +1019,11 @@ class CollectionMergeTool(Tool):
         return self._merge(args.from_memory, args.to_memory)
 
     def _merge(self, from_name: str, to_name: str) -> str:
-        source = _resolve(self._db, from_name)
-        if isinstance(source, str):
-            return source
-        source_keys = source.keys()
+        try:
+            source = _resolve(self._db, from_name)
+            source_keys = source.keys()
+        except MemoryAccessError as exc:
+            return str(exc)
         if not source_keys:
             self._db.memories.archive(from_name)
             return f"'{from_name}' was empty — archived with nothing to move."
@@ -1095,12 +1077,9 @@ class CollectionDeleteEntryTool(Tool):
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
-            removed = memory.delete(args.key)
-        except WrongShapeError as exc:
+            removed = _resolve(self._db, args.memory).delete(args.key)
+        except MemoryAccessError as exc:
             return str(exc)
         if removed == 0:
             return f"No entry with key '{args.key}' in '{args.memory}'."
@@ -1152,12 +1131,10 @@ class LogReadTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         args = ReadLogArgs(**kwargs)
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         try:
+            memory = _resolve(self._db, args.memory)
             entries = self._read_cursor(memory) if self._cursor_mode else self._read_window(memory)
-        except WrongShapeError as exc:
+        except MemoryAccessError as exc:
             return str(exc)
         return _format_entries(entries, source=args.memory, ordering="oldest first")
 
@@ -1229,16 +1206,13 @@ class LogAppendTool(Tool):
                 "every turn (conversation and run history) — you can't append to "
                 "it. Use a collection or a log you created for your own notes."
             )
-        memory = _resolve(self._db, args.memory)
-        if isinstance(memory, str):
-            return memory
         vec = await embed_text(self._llm, args.content)
         try:
-            memory.append(
+            _resolve(self._db, args.memory).append(
                 [LogEntryInput(content=args.content, content_embedding=vec)],
                 author=self._author,
             )
-        except (WrongShapeError, ReadOnlyMemoryError) as exc:
+        except MemoryAccessError as exc:
             return str(exc)
         return f"Appended to '{args.memory}'."
 
@@ -1379,15 +1353,17 @@ def build_memory_tools(
 
     **One uniform surface for every agent** — reads + lifecycle (shape)
     + entry mutations (contents).  Capability is no longer curated by
-    omission; instead every tool funnels through ``db.memory(name)`` (via
-    ``_resolve``) and calls a method on the returned ``Memory`` object, which
-    refuses anything that doesn't fit its shape / read-only-ness — no tool
-    branches on a name or shape itself:
+    omission; instead every tool funnels its resolve + op through one ``try``:
+    ``_resolve(db, name)`` (missing → ``MemoryNotFoundError``) and the method on
+    the returned ``Memory`` object (wrong shape → ``WrongShapeError``; read-only
+    facade → ``ReadOnlyMemoryError``).  All three share the ``MemoryAccessError``
+    base, so the tool catches that one and returns ``str(exc)`` verbatim — no
+    sentinel return, no per-call type check, no branching on a name or shape:
 
     * **Wrong shape.** A keyed read/write on a log (or a cursored ``log_read``
-      on a collection) hits a base no-op that raises ``WrongShapeError``; the
-      tool catches it and returns the readable refusal.  This is what stops a
-      newest-first ``collection_read_latest`` from bypassing a log's cursor.
+      on a collection) hits a base no-op that raises ``WrongShapeError``.  This
+      is what stops a newest-first ``collection_read_latest`` from bypassing a
+      log's cursor.
     * **Read-only facades.** ``log_append`` to ``user-messages`` /
       ``penny-messages`` / ``collector-runs`` is refused up front
       (``SYSTEM_LOGS``); the facades also raise ``ReadOnlyMemoryError`` if
