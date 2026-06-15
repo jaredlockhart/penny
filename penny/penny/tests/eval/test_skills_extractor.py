@@ -21,7 +21,7 @@ import pytest
 
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import EntryInput, LogEntryInput
+from penny.database.memory import EntryInput
 from penny.tests.eval.conftest import CollectorScorer, collection_entries
 
 pytestmark = pytest.mark.eval
@@ -45,20 +45,14 @@ def _seed(user_msgs, penny_msgs=(), existing_key=None):
     """Build a seeder: the conversation logs + (optionally) an existing skill."""
 
     def _apply(db: Database) -> None:
-        db.memories.append(
-            PennyConstants.MEMORY_USER_MESSAGES_LOG,
-            [LogEntryInput(content=message) for message in user_msgs],
-            author="user",
-        )
-        if penny_msgs:
-            db.memories.append(
-                PennyConstants.MEMORY_PENNY_MESSAGES_LOG,
-                [LogEntryInput(content=message) for message in penny_msgs],
-                author="penny",
-            )
+        # ``user-messages`` / ``penny-messages`` are read facades over
+        # ``messagelog`` — seed the canonical table, not the (read-only) facade.
+        for message in user_msgs:
+            db.messages.log_message(PennyConstants.MessageDirection.INCOMING, "user", message)
+        for message in penny_msgs:
+            db.messages.log_message(PennyConstants.MessageDirection.OUTGOING, "penny", message)
         if existing_key is not None:
-            db.memories.write(
-                _SKILLS,
+            db.memory(_SKILLS).write(
                 [EntryInput(key=existing_key, content=_EXISTING[existing_key])],
                 author="user",
             )

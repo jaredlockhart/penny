@@ -147,16 +147,23 @@ def test_messages_split_into_user_and_penny_logs(tmp_path):
 
     migrate(db.db_path)
 
-    with sqlite3.connect(db.db_path) as conn:
-        user_rows = _entries(conn, "user-messages")
-        penny_rows = _entries(conn, "penny-messages")
+    # ``user-messages`` / ``penny-messages`` are read facades over ``messagelog``
+    # (the 0027 memory_entry replica is dropped by 0059), so read them through the
+    # facade.  A message has two authors — the user (incoming) or Penny (outgoing).
+    user_messages = db.memory("user-messages")
+    penny_messages = db.memory("penny-messages")
+    assert user_messages is not None and penny_messages is not None
+    user_rows = user_messages.read_all()
+    penny_rows = penny_messages.read_all()
 
-    assert user_rows == [(None, "hey penny", "user", None, incoming_vec)]
-    assert penny_rows == [
-        (None, "hey back", "chat", None, None),
-        (None, "thinking about jazz", "chat", None, None),
-        (None, "did you see this jazz article?", "notify", None, None),
+    assert [(e.content, e.author) for e in user_rows] == [("hey penny", "user")]
+    assert [(e.content, e.author) for e in penny_rows] == [
+        ("hey back", "penny"),
+        ("thinking about jazz", "penny"),
+        ("did you see this jazz article?", "penny"),
     ]
+    # The incoming message's embedding survives the facade (read from messagelog).
+    assert user_rows[0].content_embedding == incoming_vec
 
 
 def test_preferences_split_by_valence(tmp_path):

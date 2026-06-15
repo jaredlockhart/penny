@@ -36,8 +36,7 @@ from penny.agents.models import ControllerResponse
 from penny.config import Config
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
-from penny.database.memory_store import LogEntryInput
-from penny.database.models import Memory
+from penny.database.models import MemoryRow
 from penny.llm.client import LlmClient
 from penny.tools.base import Tool
 from penny.tools.browse import BrowseTool
@@ -47,7 +46,6 @@ from penny.tools.memory_tools import (
     CollectionWriteTool,
     DoneTool,
     LogAppendTool,
-    LogGetTool,
     UpdateEntryTool,
     check_extraction_prompt,
 )
@@ -78,16 +76,6 @@ class Collector(BackgroundAgent):
     """Single dispatcher agent — picks the most-overdue ready collection per cycle."""
 
     name = "collector"
-
-    # Per-outcome marker prefixed to the ``collector-runs`` entry — readable to
-    # the user in the addon and to Penny when she reads the log.  The outcome
-    # word itself is included too, so the state is unambiguous either way.
-    _OUTCOME_MARKER = {
-        RunOutcome.WORKED: "✅",
-        RunOutcome.NO_WORK: "💤",
-        RunOutcome.FAILED: "❌",
-        RunOutcome.CANCELLED: "⏸️",
-    }
 
     # Runtime rules every collector cycle gets, appended to whatever
     # extraction_prompt the chat agent (or migration) wrote on the
@@ -139,23 +127,23 @@ class Collector(BackgroundAgent):
         # tool, the addon's "run extractor" button) call ``run_for`` off the
         # scheduler's cadence.  ``_cycle_lock`` serializes every cycle so
         # ``_current_target`` is never clobbered by an overlapping run.
-        self._current_target: Memory | None = None
+        self._current_target: MemoryRow | None = None
         self._cycle_lock = asyncio.Lock()
 
     def get_tools(self) -> list[Tool]:
-        """Standard collector surface, plus the quality cycle's review tools.
+        """Standard collector surface, plus ``prompt_test`` for the quality cycle.
 
-        The self-correcting ``quality`` collector is the only cycle that
-        inspects another run's full trace (``log_get``) and revises another
-        collection's extraction_prompt (``prompt_test``), so it's the only one
-        that needs them.  Gating per bound target keeps both out of every other
-        collector's surface (and out of the dry-run's own surface, which
-        bypasses this override — no nested prompt_test/log_get).
+        The self-correcting ``quality`` collector is the only cycle that revises
+        another collection's extraction_prompt, so it's the only one that
+        dry-runs a candidate first.  It reviews runs by reading the
+        ``collector-runs`` log (a facade over ``promptlog``) with the ordinary
+        ``log_read`` — no special inspection tool.  Gating per bound target keeps
+        ``prompt_test`` out of every other collector's surface (and out of the
+        dry-run's own surface, which bypasses this override — no nesting).
         """
         tools = super().get_tools()
         target = self._current_target
         if target is not None and target.name == PennyConstants.MEMORY_QUALITY_COLLECTION:
-            tools.append(LogGetTool(self.db))
             tools.append(PromptTestTool(self))
         return tools
 
@@ -215,7 +203,7 @@ class Collector(BackgroundAgent):
         captures = await runner.simulate(collection)
         return _summarize_dry_run(collection_name, captures)
 
-    async def _execute_cycle(self, collection: Memory) -> tuple[bool, str]:
+    async def _execute_cycle(self, collection: MemoryRow) -> tuple[bool, str]:
         """Run one full agent cycle bound to ``collection`` with audit cleanup.
 
         Owns the ``run_id`` so cleanup has the correct UUID even if
@@ -248,7 +236,6 @@ class Collector(BackgroundAgent):
                     # One determination of this cycle's outcome, used for the
                     # audit log, the promptlog tag, and the throttle alike.
                     outcome, summary = self._cycle_result(response)
-                    self._log_run(collection, outcome, summary, run_id)
                     self._tag_promptlog_run(run_id, outcome, summary)
                     self._apply_throttle(collection, outcome)
                 self._current_target = None
@@ -309,7 +296,7 @@ class Collector(BackgroundAgent):
             return RunOutcome.WORKED, summary
         return RunOutcome.NO_WORK, summary
 
-    def _apply_throttle(self, collection: Memory, outcome: RunOutcome) -> None:
+    def _apply_throttle(self, collection: MemoryRow, outcome: RunOutcome) -> None:
         """Auto-tune the collection's interval from this cycle's outcome.
 
         A ``worked`` cycle snaps the interval back to the user's set cadence
@@ -335,28 +322,7 @@ class Collector(BackgroundAgent):
         if interval != current or idle != collection.consecutive_idle_runs:
             self.db.memories.set_cadence(collection.name, interval, idle)
 
-    # ── Per-cycle audit log ───────────────────────────────────────────────
-
-    def _log_run(self, target: Memory, outcome: RunOutcome, summary: str, run_id: str) -> None:
-        """Append one entry to ``collector-runs`` describing this cycle.
-
-        The entry leads with the outcome (marker + word) so the state is
-        legible both to the user in the addon and to Penny when she reads the
-        log — e.g. ``[espresso-gear] 💤 no_work — nothing new``.  It is keyed by
-        this cycle's ``run_id`` so the quality collector can expand a suspicious
-        summary into the run's full trace via ``log_get``.
-        """
-        marker = self._OUTCOME_MARKER[outcome]
-        self.db.memories.append(
-            PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
-            [
-                LogEntryInput(
-                    content=f"[{target.name}] {marker} {outcome.value} — {summary}",
-                    key=run_id,
-                )
-            ],
-            author=self.name,
-        )
+    # ── Per-cycle audit (on the promptlog run itself) ─────────────────────
 
     def _tag_promptlog_run(self, run_id: str, outcome: RunOutcome, summary: str) -> None:
         """Stamp the cycle outcome onto the matching promptlog run.
@@ -410,7 +376,7 @@ class Collector(BackgroundAgent):
         return self._compose_prompt(fresh)
 
     @classmethod
-    def _compose_prompt(cls, target: Memory) -> str:
+    def _compose_prompt(cls, target: MemoryRow) -> str:
         """Frame the user-authored extraction_prompt with target identity + runtime rules.
 
         The runtime-rules tail is appended structurally — not relayed through
@@ -431,7 +397,7 @@ class Collector(BackgroundAgent):
         """Pin entry mutations to the bound target collection."""
         return self._require_target().name
 
-    def _require_target(self) -> Memory:
+    def _require_target(self) -> MemoryRow:
         if self._current_target is None:
             raise RuntimeError(
                 "Collector tool surface accessed outside an execute() cycle "
@@ -441,7 +407,7 @@ class Collector(BackgroundAgent):
 
     # ── Dispatcher selection ──────────────────────────────────────────────
 
-    def _next_ready_collection(self) -> Memory | None:
+    def _next_ready_collection(self) -> MemoryRow | None:
         """Pick the most-overdue ready collection, or None if all caught up."""
         now = datetime.now(UTC)
         ready = [m for m in self.db.memories.list_all() if self._is_ready(m, now)]
@@ -450,7 +416,7 @@ class Collector(BackgroundAgent):
         return min(ready, key=self._overdue_sort_key)
 
     @staticmethod
-    def _is_ready(memory: Memory, now: datetime) -> bool:
+    def _is_ready(memory: MemoryRow, now: datetime) -> bool:
         if memory.archived or memory.extraction_prompt is None:
             return False
         if check_extraction_prompt(memory.extraction_prompt) is not None:
@@ -468,7 +434,7 @@ class Collector(BackgroundAgent):
         return elapsed >= interval
 
     @staticmethod
-    def _overdue_sort_key(memory: Memory) -> datetime:
+    def _overdue_sort_key(memory: MemoryRow) -> datetime:
         # Earliest last_collected_at runs first; never-collected sorts to the front.
         return (
             _aware(memory.last_collected_at)
@@ -592,7 +558,7 @@ class _DryRunCollector(Collector):
             )
         return tool
 
-    async def simulate(self, collection: Memory) -> list[_CapturedCall]:
+    async def simulate(self, collection: MemoryRow) -> list[_CapturedCall]:
         self._current_target = collection
         try:
             await self._run_cycle(uuid.uuid4().hex)

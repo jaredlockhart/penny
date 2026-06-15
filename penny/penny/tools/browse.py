@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants, ProgressEmoji
-from penny.database.memory_store import LogEntryInput
+from penny.database.memory import LogEntryInput
 from penny.llm.embeddings import serialize_embedding
 from penny.llm.similarity import embed_text
 from penny.prompts import Prompt
@@ -208,11 +208,9 @@ class BrowseTool(Tool):
         for section in page_sections:
             vec = await embed_text(self._embedding_client, section)
             entries.append(LogEntryInput(content=section, content_embedding=vec))
-        self._db.memories.append(
-            PennyConstants.MEMORY_BROWSE_RESULTS_LOG,
-            entries,
-            author=self._author,
-        )
+        browse_log = self._db.memory(PennyConstants.MEMORY_BROWSE_RESULTS_LOG)
+        if browse_log is not None:
+            browse_log.append(entries, author=self._author)
 
     async def _read_page(self, url: str) -> BrowsePage:
         """Read a single URL via the browser extension, retrying with backoff on disconnect.

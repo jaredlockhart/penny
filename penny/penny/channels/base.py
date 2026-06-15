@@ -14,9 +14,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from penny.config import Config
 from penny.constants import PennyConstants
-from penny.database.memory_store import LogEntryInput
 from penny.database.models import MessageLog
 from penny.llm import LlmClient
+from penny.llm.embeddings import serialize_embedding
 from penny.llm.image_client import OllamaImageClient
 from penny.llm.similarity import embed_text
 from penny.responses import PennyResponse
@@ -325,6 +325,9 @@ class MessageChannel(ABC):
         prepared = self.prepare_outgoing(content)
         device = self._db.devices.get_by_identifier(recipient)
         device_id = device.id if device else None
+        # Embed once: stored on the messagelog row (the penny-messages facade's
+        # read_similar ranks on it) and reused for nearest-image matching.
+        embedding = await embed_text(self._embedding_model_client, prepared)
         message_id = self._db.messages.log_message(
             PennyConstants.MessageDirection.OUTGOING,
             self.sender_id,
@@ -333,10 +336,7 @@ class MessageChannel(ABC):
             recipient=recipient,
             thought_id=thought_id,
             device_id=device_id,
-        )
-        embedding = await embed_text(self._embedding_model_client, prepared)
-        await self._append_to_memory_log(
-            PennyConstants.MEMORY_PENNY_MESSAGES_LOG, prepared, author, embedding
+            embedding=serialize_embedding(embedding) if embedding is not None else None,
         )
         attachments = self._resolve_media(attachments, embedding)
         external_id = await self.send_message(recipient, prepared, attachments, quote_message)
@@ -362,26 +362,6 @@ class MessageChannel(ABC):
             return attachments
         encoded = base64.b64encode(media.data).decode()
         return [f"data:{media.mime_type};base64,{encoded}"]
-
-    async def _append_to_memory_log(
-        self, name: str, content: str, author: str, embedding: list[float] | None = None
-    ) -> None:
-        """Append ``content`` to a memory log, embedding at write time.
-
-        The embedding is best-effort — if no embedding client is configured
-        or embed_text fails, the entry is still appended without a vector.  A
-        precomputed ``embedding`` is reused when the caller already has one.
-        """
-        vec = (
-            embedding
-            if embedding is not None
-            else await embed_text(self._embedding_model_client, content)
-        )
-        self._db.memories.append(
-            name,
-            [LogEntryInput(content=content, content_embedding=vec)],
-            author=author,
-        )
 
     async def handle_message(self, envelope_data: dict) -> None:
         """
@@ -555,9 +535,8 @@ class MessageChannel(ABC):
         threaded through ambient state.
         """
         logger.info("Dispatching to message agent for %s", message.sender)
-        await self._append_to_memory_log(
-            PennyConstants.MEMORY_USER_MESSAGES_LOG, message.content, "user"
-        )
+        # The incoming message is logged to ``messagelog`` below (``log_message``);
+        # ``user-messages`` is a read facade over it — no separate append.
         parent_id: int | None = None
         if message.quoted_text:
             parent_id, _ = self._db.messages.get_thread_context(message.quoted_text)
@@ -569,6 +548,7 @@ class MessageChannel(ABC):
             quoted_text=message.quoted_text,
             **self._make_handle_kwargs(message, progress),
         )
+        incoming_embedding = await embed_text(self._embedding_model_client, message.content)
         incoming_id = self._db.messages.log_message(
             PennyConstants.MessageDirection.INCOMING,
             user_sender,
@@ -576,6 +556,9 @@ class MessageChannel(ABC):
             parent_id=parent_id,
             signal_timestamp=message.signal_timestamp,
             device_id=device_id,
+            embedding=serialize_embedding(incoming_embedding)
+            if incoming_embedding is not None
+            else None,
         )
         await self._deliver_agent_response(
             message, user_sender, response, incoming_id, progress, self._message_agent.name

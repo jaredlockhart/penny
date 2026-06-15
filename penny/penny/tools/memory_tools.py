@@ -18,16 +18,19 @@ reads return empty.
 from __future__ import annotations
 
 import logging
+from abc import abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from penny.constants import PennyConstants
 from penny.database import Database
-from penny.database.memory_store import (
+from penny.database.memory import (
     DedupThresholds,
     EntryInput,
     Inclusion,
     LogEntryInput,
+    Memory,
+    MemoryAccessError,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
     RecallMode,
@@ -49,7 +52,6 @@ from penny.tools.memory_args import (
     ExistsArgs,
     LogAppendArgs,
     LogCreateArgs,
-    LogGetArgs,
     MemoryNameArgs,
     ReadLatestArgs,
     ReadLogArgs,
@@ -105,6 +107,44 @@ def _format_entries(
     return f"{len(entries)} {noun} from `{source}`{suffix}:\n{body}"
 
 
+def _resolve(db: Database, name: str) -> Memory:
+    """The ``Memory`` object for ``name``; raises ``MemoryNotFoundError`` when it
+    doesn't exist.
+
+    The single dispatch every content tool funnels through.  The ``MemoryTool``
+    base turns any ``MemoryAccessError`` — missing (here), wrong shape, or
+    read-only (raised by the object) — into the tool's readable result, so a
+    tool body just resolves and operates, with no type check or try/except.
+    """
+    memory = db.memory(name)
+    if memory is None:
+        raise MemoryNotFoundError(name)
+    return memory
+
+
+class MemoryTool(Tool):
+    """Base for tools that operate on a memory.
+
+    ``execute`` runs the subclass's ``_run`` and turns any memory exception into
+    the tool's readable result — a ``MemoryAccessError`` (missing / wrong shape /
+    read-only) or a ``MemoryAlreadyExistsError`` (create conflict).  Every such
+    exception renders its own message, so the handling is uniformly
+    ``return str(exc)`` and lives here once: a tool body just calls the op and
+    lets the error propagate — no per-tool try/except, no format strings.
+    """
+
+    async def execute(self, **kwargs: Any) -> str:
+        try:
+            return await self._run(**kwargs)
+        except (MemoryAccessError, MemoryAlreadyExistsError) as exc:
+            return str(exc)
+
+    @abstractmethod
+    async def _run(self, **kwargs: Any) -> str:
+        """Resolve/create a memory and operate on it; let any memory exception
+        propagate to :meth:`execute`."""
+
+
 def check_extraction_prompt(prompt: str | None) -> str | None:
     """Return an error string if prompt is set but too short, else None."""
     if prompt is None or len(prompt) >= EXTRACTION_PROMPT_MIN_CHARS:
@@ -157,7 +197,7 @@ def _format_collection_echo(memory: Any, verb: str) -> str:
 # ── Metadata ────────────────────────────────────────────────────────────────
 
 
-class CollectionCreateTool(Tool):
+class CollectionCreateTool(MemoryTool):
     """Create a new keyed collection.
 
     Description doubles as the chat-agent's guide to writing good
@@ -293,28 +333,25 @@ class CollectionCreateTool(Tool):
         self._db = db
         self._llm_client = llm_client
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionCreateArgs(**kwargs)
         if error := check_extraction_prompt(args.extraction_prompt):
             return error
         description_embedding = await embed_text(self._llm_client, args.description)
-        try:
-            memory = self._db.memories.create_collection(
-                args.name,
-                args.description,
-                Inclusion(args.inclusion),
-                RecallMode(args.recall),
-                extraction_prompt=args.extraction_prompt,
-                collector_interval_seconds=args.collector_interval_seconds,
-                description_embedding=description_embedding,
-                intent=args.intent,
-            )
-        except MemoryAlreadyExistsError:
-            return f"Collection '{args.name}' already exists."
+        memory = self._db.memories.create_collection(
+            args.name,
+            args.description,
+            Inclusion(args.inclusion),
+            RecallMode(args.recall),
+            extraction_prompt=args.extraction_prompt,
+            collector_interval_seconds=args.collector_interval_seconds,
+            description_embedding=description_embedding,
+            intent=args.intent,
+        )
         return _format_collection_echo(memory, "Created")
 
 
-class LogCreateTool(Tool):
+class LogCreateTool(MemoryTool):
     """Create a new append-only log."""
 
     name = "log_create"
@@ -353,23 +390,20 @@ class LogCreateTool(Tool):
         self._db = db
         self._llm_client = llm_client
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = LogCreateArgs(**kwargs)
         description_embedding = await embed_text(self._llm_client, args.description)
-        try:
-            self._db.memories.create_log(
-                args.name,
-                args.description,
-                Inclusion(args.inclusion),
-                RecallMode(args.recall),
-                description_embedding=description_embedding,
-            )
-        except MemoryAlreadyExistsError:
-            return f"Log '{args.name}' already exists."
+        self._db.memories.create_log(
+            args.name,
+            args.description,
+            Inclusion(args.inclusion),
+            RecallMode(args.recall),
+            description_embedding=description_embedding,
+        )
         return f"Created log '{args.name}'."
 
 
-class CollectionArchiveTool(Tool):
+class CollectionArchiveTool(MemoryTool):
     """Archive a collection — keeps data, removes it from ambient recall."""
 
     name = "collection_archive"
@@ -386,13 +420,13 @@ class CollectionArchiveTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
         self._db.memories.archive(args.memory)
         return f"Archived '{args.memory}'."
 
 
-class CollectionUnarchiveTool(Tool):
+class CollectionUnarchiveTool(MemoryTool):
     """Restore a previously archived collection to ambient recall."""
 
     name = "collection_unarchive"
@@ -406,7 +440,7 @@ class CollectionUnarchiveTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
         self._db.memories.unarchive(args.memory)
         return f"Unarchived '{args.memory}'."
@@ -415,7 +449,7 @@ class CollectionUnarchiveTool(Tool):
 # ── Collection reads ────────────────────────────────────────────────────────
 
 
-class CollectionGetTool(Tool):
+class CollectionGetTool(MemoryTool):
     """Exact-key lookup in a collection."""
 
     name = "collection_get"
@@ -435,21 +469,26 @@ class CollectionGetTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionGetArgs(**kwargs)
-        rows = self._db.memories.get_entry(args.memory, args.key)
+        rows = _resolve(self._db, args.memory).get(args.key)
         if not rows:
             return f"Key '{args.key}' not found in '{args.memory}'."
         return _format_entries(rows, source=args.memory)
 
 
-class ReadLatestTool(Tool):
-    """Return the newest entries in a memory (works for collections and logs)."""
+class CollectionReadLatestTool(MemoryTool):
+    """Return the newest entries in a collection, newest first.
 
-    name = "read_latest"
+    Collection-only: logs are read through the cursored ``log_read``, never
+    through a newest-first scan (which would bypass the cursor and silently miss
+    entries).  A log target gets a readable refusal.
+    """
+
+    name = "collection_read_latest"
     description = (
-        "Return the newest entries in a memory, newest first. Works for "
-        "both collections and logs. Omit ``k`` to return every entry."
+        "Return the newest entries in a collection, newest first. Omit ``k`` to "
+        "return every entry. Collections only — to read a log use log_read."
     )
     parameters = {
         "type": "object",
@@ -463,13 +502,13 @@ class ReadLatestTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = ReadLatestArgs(**kwargs)
-        entries = self._db.memories.read_latest(args.memory, args.k)
+        entries = _resolve(self._db, args.memory).read_latest(args.k)
         return _format_entries(entries, source=args.memory, ordering="most recent first")
 
 
-class CollectionReadRandomTool(Tool):
+class CollectionReadRandomTool(MemoryTool):
     """Return entries sampled uniformly at random from a collection."""
 
     name = "collection_read_random"
@@ -486,13 +525,13 @@ class CollectionReadRandomTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = ReadRandomArgs(**kwargs)
-        entries = self._db.memories.read_random(args.memory, args.k)
+        entries = _resolve(self._db, args.memory).read_random(args.k)
         return _format_entries(entries, source=args.memory, ordering="random sample")
 
 
-class ReadSimilarTool(Tool):
+class ReadSimilarTool(MemoryTool):
     """Return entries most similar to an anchor phrase (collections or logs)."""
 
     name = "read_similar"
@@ -520,7 +559,7 @@ class ReadSimilarTool(Tool):
         self._db = db
         self._llm = llm_client
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = ReadSimilarArgs(**kwargs)
         vec = await embed_text(self._llm, args.anchor)
         if vec is None:
@@ -528,11 +567,11 @@ class ReadSimilarTool(Tool):
                 "%s: similarity search unavailable — no embedding model configured", self.name
             )
             return "(similarity search unavailable — no embedding model configured)"
-        entries = self._db.memories.read_similar(args.memory, vec, args.k)
+        entries = _resolve(self._db, args.memory).read_similar(vec, args.k)
         return _format_entries(entries, source=args.memory, ordering="most relevant first")
 
 
-class CollectionKeysTool(Tool):
+class CollectionKeysTool(MemoryTool):
     """List the unique keys currently in a collection."""
 
     name = "collection_keys"
@@ -546,9 +585,9 @@ class CollectionKeysTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
-        keys = self._db.memories.keys(args.memory)
+        keys = _resolve(self._db, args.memory).keys()
         if not keys:
             return "(no keys)"
         return "\n".join(f"- {key}" for key in keys)
@@ -569,7 +608,7 @@ def _format_duplicate(result: WriteResult) -> str:
     return result.key
 
 
-class CollectionWriteTool(Tool):
+class CollectionWriteTool(MemoryTool):
     """Write entries to a collection with similarity-based dedup."""
 
     name = "collection_write"
@@ -609,14 +648,15 @@ class CollectionWriteTool(Tool):
         self._author = author
         self._scope = scope
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionWriteArgs(**kwargs)
         if self._scope is not None and args.memory != self._scope:
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
+        memory = _resolve(self._db, args.memory)
         entries = [await self._build_entry(spec) for spec in args.entries]
-        results = self._db.memories.write(args.memory, entries, author=self._author)
+        results = memory.write(entries, author=self._author)
         return self._format_results(args.memory, results)
 
     async def _build_entry(self, spec: CollectionEntrySpec) -> EntryInput:
@@ -661,7 +701,7 @@ class CollectionWriteTool(Tool):
         return " ".join(parts) if parts else "(no entries written)"
 
 
-class UpdateEntryTool(Tool):
+class UpdateEntryTool(MemoryTool):
     """Replace the content of an existing entry in a collection."""
 
     name = "update_entry"
@@ -687,19 +727,19 @@ class UpdateEntryTool(Tool):
         self._author = author
         self._scope = scope
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = UpdateEntryArgs(**kwargs)
         if self._scope is not None and args.memory != self._scope:
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        outcome = self._db.memories.update(args.memory, args.key, args.content, self._author)
+        outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.memory}'."
         return f"Updated '{args.key}' in '{args.memory}'."
 
 
-class CollectionUpdateTool(Tool):
+class CollectionUpdateTool(MemoryTool):
     """Update collection metadata: description, recall, extraction_prompt, interval.
 
     Chat-facing.  Lets the user evolve a collection mid-conversation —
@@ -728,7 +768,7 @@ class CollectionUpdateTool(Tool):
         "included.\n"
         "- ``extraction_prompt`` — FULL replacement body, not a diff. "
         "Drives what the collector actually does. Read the current body "
-        "via ``collection_metadata`` first if you need to preserve any "
+        "via ``memory_metadata`` first if you need to preserve any "
         "of it.\n"
         "- ``collector_interval_seconds`` — cadence in seconds.\n"
         "\n"
@@ -738,7 +778,7 @@ class CollectionUpdateTool(Tool):
         "\n"
         "For workflow guidance — which field maps to which user intent "
         "(scope change vs cadence change vs silent flip), when to call "
-        "``collection_metadata`` first, when to propose before applying — "
+        "``memory_metadata`` first, when to propose before applying — "
         "see the skills surfaced in your recall context."
     )
     parameters = {
@@ -775,7 +815,7 @@ class CollectionUpdateTool(Tool):
                 "description": (
                     "FULL rewritten body — replaces the whole prompt, not "
                     "a diff. Drives what the collector actually does. Read "
-                    "current body via collection_metadata first for scope "
+                    "current body via memory_metadata first for scope "
                     "or silent-flip changes."
                 ),
             },
@@ -794,7 +834,7 @@ class CollectionUpdateTool(Tool):
         self._db = db
         self._llm_client = llm_client
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionUpdateArgs(**kwargs)
         if error := check_extraction_prompt(args.extraction_prompt):
             return error
@@ -806,25 +846,26 @@ class CollectionUpdateTool(Tool):
             if args.description is not None
             else None
         )
-        try:
-            memory = self._db.memories.update_collection_metadata(
-                args.name,
-                description=args.description,
-                inclusion=inclusion,
-                recall=recall,
-                extraction_prompt=args.extraction_prompt,
-                collector_interval_seconds=args.collector_interval_seconds,
-                description_embedding=description_embedding,
-            )
-        except MemoryNotFoundError:
-            return f"Collection '{args.name}' not found."
+        memory = self._db.memories.update_collection_metadata(
+            args.name,
+            description=args.description,
+            inclusion=inclusion,
+            recall=recall,
+            extraction_prompt=args.extraction_prompt,
+            collector_interval_seconds=args.collector_interval_seconds,
+            description_embedding=description_embedding,
+        )
         return _format_collection_echo(memory, "Updated")
 
 
-class CollectionMetadataTool(Tool):
-    """Return the metadata fields for a single memory (collection or log)."""
+class MemoryMetadataTool(MemoryTool):
+    """Return the metadata fields for a single memory (collection or log).
 
-    name = "collection_metadata"
+    Genuinely shape-agnostic — metadata describes the memory itself, not its
+    contents — so it's named ``memory_metadata`` and applies to either shape.
+    """
+
+    name = "memory_metadata"
     description = (
         "Return metadata for a memory: description, intent (the user's "
         "original goal), recall mode, collector interval, last collected "
@@ -842,12 +883,9 @@ class CollectionMetadataTool(Tool):
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = MemoryNameArgs(**kwargs)
-        memory = self._db.memories.get(args.memory)
-        if memory is None:
-            return f"Memory '{args.memory}' not found."
-        return self._format(memory)
+        return self._format(_resolve(self._db, args.memory).row)
 
     def _format(self, memory: Any) -> str:
         interval = (
@@ -879,7 +917,7 @@ class CollectionMetadataTool(Tool):
         return "\n".join(lines)
 
 
-class CollectionMoveTool(Tool):
+class CollectionMoveTool(MemoryTool):
     """Move an entry between collections by key."""
 
     name = "collection_move"
@@ -917,7 +955,7 @@ class CollectionMoveTool(Tool):
                 "required": ["key", "from_memory"],
             }
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         if self._scope is not None and "to_memory" not in kwargs:
             kwargs["to_memory"] = self._scope
         args = CollectionMoveArgs(**kwargs)
@@ -930,9 +968,8 @@ class CollectionMoveTool(Tool):
                 f"Refused: this collector can only write to '{self._scope}', "
                 f"not '{args.to_memory}'."
             )
-        outcome = self._db.memories.move(
-            args.key, args.from_memory, args.to_memory, author=self._author
-        )
+        source = _resolve(self._db, args.from_memory)
+        outcome = source.move(args.key, args.to_memory, author=self._author)
         if outcome == "not_found":
             return f"Key '{args.key}' not found in '{args.from_memory}'."
         if outcome == "collision":
@@ -940,7 +977,7 @@ class CollectionMoveTool(Tool):
         return f"Moved '{args.key}' from '{args.from_memory}' to '{args.to_memory}'."
 
 
-class CollectionMergeTool(Tool):
+class CollectionMergeTool(MemoryTool):
     """Merge all entries from one collection into another, then archive the source."""
 
     name = "collection_merge"
@@ -965,24 +1002,25 @@ class CollectionMergeTool(Tool):
         self._db = db
         self._author = author
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionMergeArgs(**kwargs)
         return self._merge(args.from_memory, args.to_memory)
 
     def _merge(self, from_name: str, to_name: str) -> str:
-        source_keys = self._db.memories.keys(from_name)
+        source = _resolve(self._db, from_name)
+        source_keys = source.keys()
         if not source_keys:
             self._db.memories.archive(from_name)
             return f"'{from_name}' was empty — archived with nothing to move."
-        moved, dropped = self._move_entries(from_name, to_name, source_keys)
+        moved, dropped = self._move_entries(source, to_name, source_keys)
         self._db.memories.archive(from_name)
         return self._summary(from_name, to_name, moved, dropped)
 
-    def _move_entries(self, from_name: str, to_name: str, keys: list[str]) -> tuple[int, int]:
+    def _move_entries(self, source: Memory, to_name: str, keys: list[str]) -> tuple[int, int]:
         moved = 0
         dropped = 0
         for key in keys:
-            outcome = self._db.memories.move(key, from_name, to_name, author=self._author)
+            outcome = source.move(key, to_name, author=self._author)
             if outcome == "ok":
                 moved += 1
             else:
@@ -997,7 +1035,7 @@ class CollectionMergeTool(Tool):
         return ", ".join(parts[:2]) + f". {parts[-1]}" if dropped else f"{parts[0]}. {parts[-1]}"
 
 
-class CollectionDeleteEntryTool(Tool):
+class CollectionDeleteEntryTool(MemoryTool):
     """Delete an entry from a collection by key."""
 
     name = "collection_delete_entry"
@@ -1018,13 +1056,13 @@ class CollectionDeleteEntryTool(Tool):
         self._db = db
         self._scope = scope
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = CollectionDeleteEntryArgs(**kwargs)
         if self._scope is not None and args.memory != self._scope:
             return (
                 f"Refused: this collector can only write to '{self._scope}', not '{args.memory}'."
             )
-        removed = self._db.memories.delete(args.memory, args.key)
+        removed = _resolve(self._db, args.memory).delete(args.key)
         if removed == 0:
             return f"No entry with key '{args.key}' in '{args.memory}'."
         return f"Deleted '{args.key}' from '{args.memory}'."
@@ -1044,7 +1082,7 @@ _LOG_READ_WINDOW_DESCRIPTION = (
 )
 
 
-class LogReadTool(Tool):
+class LogReadTool(MemoryTool):
     """Read entries from a log — one tool, caller-dispatched behaviour.
 
     For a collector (``scope`` set) it's CURSOR-based: it returns the next
@@ -1073,34 +1111,34 @@ class LogReadTool(Tool):
         )
         self._pending: dict[str, datetime] = {}
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = ReadLogArgs(**kwargs)
-        entries = (
-            self._read_cursor(args.memory) if self._cursor_mode else self._read_window(args.memory)
-        )
+        memory = _resolve(self._db, args.memory)
+        entries = self._read_cursor(memory) if self._cursor_mode else self._read_window(memory)
         return _format_entries(entries, source=args.memory, ordering="oldest first")
 
-    def _read_cursor(self, memory: str) -> list[MemoryEntry]:
-        cursor = self._db.cursors.get(self._agent_name, memory)
-        limit = PennyConstants.LOG_READ_LIMIT
-        if cursor is None:
-            # First read on this log — bound to the most-recent N entries instead
-            # of the entire history (newest-first, reversed so the cursor advance
-            # tracks the latest timestamp).
-            entries = list(reversed(self._db.memories.read_latest(memory, k=limit)))
-        else:
-            # The next N since the cursor — bounded so a backlog is worked through
-            # in batches across cycles, never dumped into one loop.
-            entries = self._db.memories.read_since(memory, cursor, limit)
-        if entries:
-            max_seen = max(e.created_at for e in entries)
-            prev = self._pending.get(memory)
-            if prev is None or max_seen > prev:
-                self._pending[memory] = max_seen
+    def _read_cursor(self, memory: Memory) -> list[MemoryEntry]:
+        """The next bounded batch since this agent's committed cursor.  The log
+        owns the read (first-read = most-recent N; later = next N since the
+        cursor); the tool only tracks the pending advance.  Uniform across every
+        log backing — ``collector-runs`` renders runs, the message logs read
+        ``messagelog``, all through the same ``read_batch``."""
+        cursor = self._db.cursors.get(self._agent_name, memory.name)
+        entries = memory.read_batch(cursor, PennyConstants.LOG_READ_LIMIT)
+        self._advance_pending(memory.name, [entry.created_at for entry in entries])
         return entries
 
-    def _read_window(self, memory: str) -> list[MemoryEntry]:
-        return self._db.memories.read_recent(memory, PennyConstants.LOG_READ_WINDOW_SECONDS, None)
+    def _read_window(self, memory: Memory) -> list[MemoryEntry]:
+        return memory.read_window(PennyConstants.LOG_READ_WINDOW_SECONDS)
+
+    def _advance_pending(self, memory: str, timestamps: list[datetime]) -> None:
+        """Track the highest timestamp seen this run as the pending cursor."""
+        if not timestamps:
+            return
+        max_seen = max(timestamps)
+        prev = self._pending.get(memory)
+        if prev is None or max_seen > prev:
+            self._pending[memory] = max_seen
 
     def commit_pending(self) -> None:
         """Persist the highest timestamp seen during this run as the new cursor.
@@ -1117,50 +1155,10 @@ class LogReadTool(Tool):
         self._pending.clear()
 
 
-class LogGetTool(Tool):
-    """Expand one collector run into its full tool-call trace.
-
-    Pairs with ``log_read`` on ``collector-runs``: that read returns run
-    summaries each tagged with a ``[run id]``; this fetches the full prompt-log
-    trace for one of them.  Gated to the quality cycle — it's the detail leg of
-    "read the summaries, drill into the suspicious one, judge it."
-    """
-
-    name = "log_get"
-    description = (
-        "Expand a single collector run into its full trace.  Pass the id shown "
-        "in brackets on a `collector-runs` entry (from log_read).  Returns "
-        "everything that run actually did — every tool call with full arguments "
-        "(the entries it wrote, the exact message it sent) and the run's "
-        "outcome — so you can judge whether the behaviour matched the "
-        "collection's intent."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "run_id": {
-                "type": "string",
-                "description": "The bracketed run id on a collector-runs entry.",
-            }
-        },
-        "required": ["run_id"],
-    }
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def execute(self, **kwargs: Any) -> str:
-        args = LogGetArgs(**kwargs)
-        trace = self._db.messages.render_run_trace(args.run_id)
-        if trace is None:
-            return f"No run found for id '{args.run_id}'."
-        return trace
-
-
 # ── Log writes ──────────────────────────────────────────────────────────────
 
 
-class LogAppendTool(Tool):
+class LogAppendTool(MemoryTool):
     """Append a keyless entry to a log."""
 
     name = "log_append"
@@ -1179,7 +1177,7 @@ class LogAppendTool(Tool):
         self._llm = llm_client
         self._author = author
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def _run(self, **kwargs: Any) -> str:
         args = LogAppendArgs(**kwargs)
         if args.memory in PennyConstants.SYSTEM_LOGS:
             return (
@@ -1188,8 +1186,7 @@ class LogAppendTool(Tool):
                 "it. Use a collection or a log you created for your own notes."
             )
         vec = await embed_text(self._llm, args.content)
-        self._db.memories.append(
-            args.memory,
+        _resolve(self._db, args.memory).append(
             [LogEntryInput(content=args.content, content_embedding=vec)],
             author=self._author,
         )
@@ -1332,25 +1329,28 @@ def build_memory_tools(
 
     **One uniform surface for every agent** — reads + lifecycle (shape)
     + entry mutations (contents).  Capability is no longer curated by
-    omission; instead every agent gets the full set and deterministic
-    invariants in the tools / access layer reject invalid calls with a
-    message the model can read and react to:
+    omission; instead every tool funnels its resolve + op through one ``try``:
+    ``_resolve(db, name)`` (missing → ``MemoryNotFoundError``) and the method on
+    the returned ``Memory`` object (wrong shape → ``WrongShapeError``; read-only
+    facade → ``ReadOnlyMemoryError``).  All three share the ``MemoryAccessError``
+    base, so the tool catches that one and returns ``str(exc)`` verbatim — no
+    sentinel return, no per-call type check, no branching on a name or shape:
 
-    * **System logs are framework-only.** ``log_append`` refuses the
-      four side-effect-written system logs (``LogAppendTool.execute``).
-    * **Entry tools need a collection, not a log.** ``write`` /
-      ``update`` / ``delete`` / ``move`` go through ``_require_type`` in
-      the store, which raises on a log target.
+    * **Wrong shape.** A keyed read/write on a log (or a cursored ``log_read``
+      on a collection) hits a base no-op that raises ``WrongShapeError``.  This
+      is what stops a newest-first ``collection_read_latest`` from bypassing a
+      log's cursor.
+    * **Read-only facades.** ``log_append`` to ``user-messages`` /
+      ``penny-messages`` / ``collector-runs`` is refused up front
+      (``SYSTEM_LOGS``); the facades also raise ``ReadOnlyMemoryError`` if
+      reached, since they're views over ``messagelog`` / ``promptlog``.
     * **Collector binding.** ``scope`` pins a collector's entry
       mutations to its bound collection ``X`` (the ``scope`` check in
       each entry-mutation tool).  Chat passes ``scope=None`` — its
       entry mutations are unrestricted, since edits are user-directed.
 
-    Reads are shape-agnostic (``read_latest`` / ``read_similar``); the
-    parallel ``collection_*`` / ``log_*`` versions were merged earlier
-    since they share the same access-layer call.  ``read_all`` was
-    removed — pagination via ``read_latest(memory, k=N)`` is always
-    safer than dumping a 1,000-entry collection into the prompt.
+    ``read_similar`` (embedding search) and ``memory_metadata`` are the
+    genuinely shape-agnostic reads — they work on either shape.
 
     ``DoneTool`` / ``send_message`` are intentionally not here — they're
     loop-control, not capability, added in ``BackgroundAgent.get_tools``.
@@ -1358,12 +1358,12 @@ def build_memory_tools(
     the model may call it instead of producing a reply.
     """
     reads: list[Tool] = [
-        ReadLatestTool(db),
+        CollectionReadLatestTool(db),
         ReadSimilarTool(db, llm_client),
         CollectionGetTool(db),
         CollectionReadRandomTool(db),
         CollectionKeysTool(db),
-        CollectionMetadataTool(db),
+        MemoryMetadataTool(db),
         LogReadTool(db, agent_name, scope),
         ExistsTool(db, llm_client),
     ]

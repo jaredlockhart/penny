@@ -17,8 +17,8 @@ from penny.agents.collector import Collector
 from penny.agents.models import ControllerResponse, ToolCallRecord
 from penny.constants import PennyConstants, RunOutcome
 from penny.database import Database
-from penny.database.memory_store import Inclusion, LogEntryInput, RecallMode
-from penny.database.models import Memory
+from penny.database.memory import Inclusion, LogEntryInput, RecallMode
+from penny.database.models import MemoryRow
 from penny.llm.client import LlmClient
 from penny.tools.memory_tools import LogReadTool
 
@@ -43,7 +43,7 @@ def _make_collector(test_config, tmp_path) -> tuple[Collector, Database]:
     return collector, db
 
 
-def _get(db: Database, name: str) -> Memory:
+def _get(db: Database, name: str) -> MemoryRow:
     """Fetch a memory that the test just created — asserts it exists (typed)."""
     memory = db.memories.get(name)
     assert memory is not None
@@ -67,9 +67,10 @@ async def test_collector_cursors_partition_per_collection(test_config, tmp_path)
     and starved the rest.  ``get_tools`` keys on the bound collection instead.
     """
     collector, db = _make_collector(test_config, tmp_path)
-    db.memories.create_log("user-messages", "log", Inclusion.ALWAYS, RecallMode.RECENT)
-    db.memories.append(
-        "user-messages",
+    db.memories.create_log("chatter", "log", Inclusion.ALWAYS, RecallMode.RECENT)
+    chatter = db.memory("chatter")
+    assert chatter is not None
+    chatter.append(
         [LogEntryInput(content="hello there", content_embedding=None)],
         author="user",
     )
@@ -82,21 +83,21 @@ async def test_collector_cursors_partition_per_collection(test_config, tmp_path)
         return tool
 
     alpha = _log_read_for("alpha")
-    alpha_result = await alpha.execute(memory="user-messages")
+    alpha_result = await alpha.execute(memory="chatter")
     assert "hello there" in alpha_result
     # Framing: the read leads with a count + source header so the model reads
     # the body as fetched data, not a fresh instruction.
-    assert "1 entry from `user-messages`" in alpha_result
+    assert "1 entry from `chatter`" in alpha_result
     alpha.commit_pending()  # advance alpha's cursor past the entry
 
     beta = _log_read_for("beta")
-    assert "hello there" in await beta.execute(memory="user-messages"), (
+    assert "hello there" in await beta.execute(memory="chatter"), (
         "beta starved by alpha's cursor — collections share one cursor"
     )
 
     # Cursors key on the collection, never on the dispatcher identity.
-    assert db.cursors.get("alpha", "user-messages") is not None
-    assert db.cursors.get("collector", "user-messages") is None
+    assert db.cursors.get("alpha", "chatter") is not None
+    assert db.cursors.get("collector", "chatter") is None
 
 
 def test_dispatcher_returns_none_when_no_collections_have_prompts(test_config, tmp_path):
@@ -248,7 +249,7 @@ def test_compose_prompt_wraps_extraction_with_target_and_runtime_rules():
     rules are load-bearing (provenance, batched writes, gated send_message,
     structured done) — chat doesn't relay them, the collector base attaches
     them on every cycle."""
-    target = Memory(
+    target = MemoryRow(
         name="board-games",
         type="collection",
         description="Strategy board games worth buying",
@@ -308,8 +309,8 @@ def _seed_collector_runs_log(db: Database) -> None:
     db.memories.create_log("collector-runs", "audit log", Inclusion.NEVER, RecallMode.RECENT)
 
 
-def _target() -> Memory:
-    return Memory(
+def _target() -> MemoryRow:
+    return MemoryRow(
         name="board-games",
         type="collection",
         description="x",
@@ -335,7 +336,7 @@ def test_cycle_result_classifies_worked_no_work_failed():
     no_work = ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(tool="read_latest", arguments={}),
+            ToolCallRecord(tool="collection_read_latest", arguments={}),
             ToolCallRecord(tool="done", arguments={"success": True, "summary": "no new matches"}),
         ],
     )
@@ -351,25 +352,6 @@ def test_cycle_result_classifies_worked_no_work_failed():
         answer="", tool_calls=[ToolCallRecord(tool="browse", arguments={"queries": ["x"]})]
     )
     assert Collector._cycle_result(no_done)[0] == RunOutcome.FAILED
-
-
-def test_log_run_writes_outcome_marker_word_and_summary(test_config, tmp_path):
-    """Each ``collector-runs`` entry leads with the outcome (marker + word) so
-    the state is legible to both the user and Penny reading the log."""
-    collector, db = _make_collector(test_config, tmp_path)
-    _seed_collector_runs_log(db)
-
-    collector._log_run(_target(), RunOutcome.WORKED, "wrote 2 new games", "run-worked")
-    collector._log_run(_target(), RunOutcome.NO_WORK, "nothing new", "run-noop")
-    collector._log_run(_target(), RunOutcome.FAILED, "no source URL found", "run-failed")
-    entries = db.memories.read_latest("collector-runs")
-    joined = "\n".join(e.content for e in entries)
-
-    assert "[board-games] ✅ worked — wrote 2 new games" in joined
-    assert "💤 no_work — nothing new" in joined
-    assert "❌ failed — no source URL found" in joined
-    # Each run entry is keyed by its run_id so quality can log_get the trace.
-    assert {"run-worked", "run-noop", "run-failed"} <= {e.key for e in entries}
 
 
 # ── Promptlog run-outcome tagging ────────────────────────────────────────
@@ -562,7 +544,7 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
     onto cycle A's promptlog row even if A's loop crashed and B's
     cleanup runs later."""
     collector, db = _make_collector(test_config, tmp_path)
-    target_a = Memory(
+    target_a = MemoryRow(
         name="notified-thoughts",
         type="collection",
         description="x",
@@ -570,7 +552,7 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
         archived=False,
         extraction_prompt="x",
     )
-    target_b = Memory(
+    target_b = MemoryRow(
         name="card-games",
         type="collection",
         description="x",
@@ -646,7 +628,7 @@ def _idle_response() -> ControllerResponse:
     return ControllerResponse(
         answer="",
         tool_calls=[
-            ToolCallRecord(tool="read_latest", arguments={}, failed=False),
+            ToolCallRecord(tool="collection_read_latest", arguments={}, failed=False),
             ToolCallRecord(tool="done", arguments={}, failed=False),
         ],
     )

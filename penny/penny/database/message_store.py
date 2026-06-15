@@ -23,21 +23,6 @@ _MONOSPACE_RE = re.compile(r"`(.+?)`")
 _TILDE_OPERATOR = "\u223c"
 
 
-def _parse_tool_args(function: dict) -> object:
-    """Deserialize a stored tool call's ``arguments`` (a JSON string) to a dict.
-
-    Falls back to the raw string when the model emitted malformed JSON, so the
-    trace still shows what it tried rather than dropping the call.
-    """
-    raw = function.get("arguments")
-    if not isinstance(raw, str) or not raw:
-        return raw or {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
-
-
 class PromptPerf(NamedTuple):
     """Aggregate wall time + token usage across logged prompts.
 
@@ -95,8 +80,14 @@ class MessageStore:
         recipient: str | None = None,
         thought_id: int | None = None,
         device_id: int | None = None,
+        embedding: bytes | None = None,
     ) -> int | None:
-        """Log a user message or agent response. Returns the message ID or None."""
+        """Log a user message or agent response. Returns the message ID or None.
+
+        ``embedding`` (serialized float32) is stored at write time so the message
+        is immediately searchable via the ``user-messages``/``penny-messages``
+        facades' ``read_similar``/relevant-recall path — the startup backfill only
+        catches rows logged without one."""
         if direction == PennyConstants.MessageDirection.OUTGOING:
             content = self.strip_formatting(content)
         try:
@@ -112,6 +103,7 @@ class MessageStore:
                     recipient=recipient,
                     thought_id=thought_id,
                     device_id=device_id,
+                    embedding=embedding,
                 )
                 session.add(log)
                 session.commit()
@@ -228,6 +220,35 @@ class MessageStore:
                     session.commit()
         except Exception as e:
             logger.error("Failed to set external_id: %s", e)
+
+    # --- Embeddings (startup backfill) ---
+
+    def messages_without_embeddings(self, limit: int) -> list[MessageLog]:
+        """Real messages still missing a content embedding (reactions excluded).
+
+        ``messagelog.embedding`` powers ``read_similar`` over the user/penny
+        message logs (now read facades over this table).  The startup backfill
+        fills any gaps — historical rows + anything logged since the last run."""
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(MessageLog)
+                    .where(
+                        MessageLog.embedding.is_(None),  # ty: ignore[unresolved-attribute]
+                        MessageLog.is_reaction.is_(False),  # ty: ignore[unresolved-attribute]
+                    )
+                    .limit(limit)
+                ).all()
+            )
+
+    def set_embedding(self, message_id: int, embedding: bytes) -> None:
+        """Store a serialized content embedding on a message row."""
+        with self._session() as session:
+            message = session.get(MessageLog, message_id)
+            if message is not None:
+                message.embedding = embedding
+                session.add(message)
+                session.commit()
 
     # --- Message lookup ---
 
@@ -604,72 +625,6 @@ class MessageStore:
                     select(PromptLog).order_by(PromptLog.timestamp.desc()).limit(limit)
                 ).all()
             )
-
-    def render_run_trace(self, run_id: str) -> str | None:
-        """Render one run's full tool-call trace, or None if no rows match.
-
-        The quality collector reads a ``collector-runs`` summary, picks a
-        suspicious run by its id, and calls this to see what the cycle actually
-        did — every tool call with full arguments (the entries it wrote, the
-        message it sent) plus the run's outcome — so it can judge the behaviour
-        against the collection's intent.  Arguments are rendered in full (never
-        truncated): the message text and written content are the whole point.
-        """
-        with self._session() as session:
-            prompts = list(
-                session.exec(
-                    select(PromptLog)
-                    .where(PromptLog.run_id == run_id)
-                    .order_by(PromptLog.timestamp.asc())
-                ).all()
-            )
-        if not prompts:
-            return None
-        outcome, reason, target = self._run_outcome(prompts)
-        calls = self._run_tool_calls(prompts)
-        return self._format_run_trace(target, outcome, reason, calls)
-
-    @staticmethod
-    def _run_outcome(prompts: list[PromptLog]) -> tuple[str | None, str | None, str | None]:
-        """Outcome/reason/target from the last prompt carrying them (like _serialize_run)."""
-        for p in reversed(prompts):
-            if p.run_outcome is not None or p.run_reason:
-                return p.run_outcome, p.run_reason, p.run_target
-        return None, None, prompts[0].run_target
-
-    @staticmethod
-    def _run_tool_calls(prompts: list[PromptLog]) -> list[tuple[str, object]]:
-        """Ordered (name, arguments) for every tool call across the run's prompts."""
-        calls: list[tuple[str, object]] = []
-        for p in prompts:
-            response = json.loads(p.response) if p.response else {}
-            for choice in response.get("choices", []):
-                message = choice.get("message") or {}
-                for tc in message.get("tool_calls") or []:
-                    function = tc.get("function") or {}
-                    calls.append((function.get("name") or "?", _parse_tool_args(function)))
-        return calls
-
-    @staticmethod
-    def _format_run_trace(
-        target: str | None,
-        outcome: str | None,
-        reason: str | None,
-        calls: list[tuple[str, object]],
-    ) -> str:
-        header = f"run for `{target or 'unknown'}`"
-        if outcome:
-            header += f" ({outcome}{f' — {reason}' if reason else ''})"
-        if not calls:
-            return f"{header}:\n(no tool calls recorded)"
-        lines = []
-        for index, (name, args) in enumerate(calls, start=1):
-            if isinstance(args, dict):
-                rendered = ", ".join(f"{key}={value!r}" for key, value in args.items())
-            else:
-                rendered = repr(args)
-            lines.append(f"{index}. {name}({rendered})")
-        return f"{header}:\n" + "\n".join(lines)
 
     def prompt_perf(self) -> PromptPerf:
         """Aggregate wall time + token usage across every logged prompt.

@@ -145,11 +145,14 @@ class SendMessageTool(Tool):
 
         The gate stops a background agent from spamming the user when
         there's been no reply.  When ``count == 0`` the user has spoken
-        since this agent's last send, so the next message is
-        conversational, not autonomous — no cooldown applies.
+        since Penny last sent, so the next message is conversational, not
+        autonomous — no cooldown applies.
 
-        Otherwise the next send must wait ``SEND_COOLDOWN_SECONDS``
-        since the previous one.
+        Otherwise the next send must wait ``SEND_COOLDOWN_SECONDS`` since
+        Penny's previous outgoing message.  A message has two authors —
+        Penny or the user — so the cooldown is per-Penny, not per-internal-
+        agent: any recent Penny send (a chat reply included) holds off an
+        autonomous ping.
         """
         count = self._count_sends_since_user_message()
         if count == 0:
@@ -161,28 +164,30 @@ class SendMessageTool(Tool):
         return elapsed >= self._config.runtime.SEND_COOLDOWN_SECONDS
 
     def _latest_send_time(self) -> datetime | None:
-        """Created-at of this agent's most recent ``penny-messages`` entry."""
-        for entry in self._db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG):
-            if entry.author == self._agent_name:
-                return entry.created_at
-        return None
+        """Created-at of Penny's most recent outgoing message."""
+        log = self._db.memory(PennyConstants.MEMORY_PENNY_MESSAGES_LOG)
+        entries = log.newest_entries(k=1) if log is not None else []
+        return entries[0].created_at if entries else None
 
     def _count_sends_since_user_message(self) -> int:
-        """Number of this agent's sends newer than the latest ``user-messages`` entry."""
-        latest_user = self._latest_user_message_time()
-        cutoff = _to_naive(latest_user) if latest_user is not None else None
-        count = 0
-        for entry in self._db.memories.read_latest(PennyConstants.MEMORY_PENNY_MESSAGES_LOG):
-            if entry.author != self._agent_name:
-                continue
-            if cutoff is not None and _to_naive(entry.created_at) <= cutoff:
-                break
-            count += 1
-        return count
+        """Number of Penny's outgoing messages newer than the latest user message.
+
+        Bounded read: ``read_since(cutoff)`` pushes the ``timestamp > cutoff``
+        filter into SQL, so this touches only the post-cutoff tail, never the
+        whole (unbounded-growth) outgoing log.  With no user message yet, any
+        prior Penny send counts — a single bounded existence probe."""
+        log = self._db.memory(PennyConstants.MEMORY_PENNY_MESSAGES_LOG)
+        if log is None:
+            return 0
+        cutoff = self._latest_user_message_time()
+        if cutoff is None:
+            return len(log.newest_entries(k=1))
+        return len(log.read_since(cutoff))
 
     def _latest_user_message_time(self) -> datetime | None:
         """Created-at of the most recent ``user-messages`` entry."""
-        entries = self._db.memories.read_latest(PennyConstants.MEMORY_USER_MESSAGES_LOG, k=1)
+        log = self._db.memory(PennyConstants.MEMORY_USER_MESSAGES_LOG)
+        entries = log.newest_entries(k=1) if log is not None else []
         return entries[0].created_at if entries else None
 
 

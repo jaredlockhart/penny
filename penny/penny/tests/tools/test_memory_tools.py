@@ -23,6 +23,7 @@ from penny.tools.memory_tools import (
     CollectionKeysTool,
     CollectionMergeTool,
     CollectionMoveTool,
+    CollectionReadLatestTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
     CollectionUpdateTool,
@@ -31,9 +32,7 @@ from penny.tools.memory_tools import (
     ExistsTool,
     LogAppendTool,
     LogCreateTool,
-    LogGetTool,
     LogReadTool,
-    ReadLatestTool,
     ReadSimilarTool,
     TestExtractionPromptTool,
     UpdateEntryTool,
@@ -278,7 +277,7 @@ class TestCollectionWritesAndReads:
             ],
         )
         assert "Wrote 2 entries to 'likes'" in result
-        latest = await ReadLatestTool(db).execute(memory="likes")
+        latest = await CollectionReadLatestTool(db).execute(memory="likes")
         assert "dark roast" in latest
         assert "cold brew" in latest
 
@@ -518,22 +517,19 @@ class TestCollectionMutations:
 
 class TestLogTools:
     @pytest.mark.asyncio
-    async def test_append_and_read_latest(self, tmp_path, mock_llm):
+    async def test_collection_read_latest_refuses_a_log(self, tmp_path, mock_llm):
+        """Collection reads error on a log instead of silently bypassing the
+        cursored log_read/log_get interface (the read_latest-on-a-log footgun)."""
         db = _make_db(tmp_path)
         await LogCreateTool(db, None).execute(
             name="events", description="x", inclusion="always", recall="recent"
         )
-        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
-        await append.execute(memory="events", content="first")
-        await append.execute(memory="events", content="second")
-        rendered = await ReadLatestTool(db).execute(memory="events")
-        # Leads with a count + source header so the model reads the body as
-        # fetched data; entries are numbered newest-first.
-        assert rendered.splitlines() == [
-            "2 entries from `events` (most recent first):",
-            "1. second",
-            "2. first",
-        ]
+        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
+            memory="events", content="first"
+        )
+        rendered = await CollectionReadLatestTool(db).execute(memory="events")
+        assert "Refused" in rendered
+        assert "log_read" in rendered
 
     @pytest.mark.asyncio
     async def test_log_read_window_mode(self, tmp_path, mock_llm):
@@ -550,11 +546,14 @@ class TestLogTools:
         assert "hello" in rendered
 
     @pytest.mark.asyncio
-    async def test_log_get_renders_run_trace(self, tmp_path):
-        """log_get expands a run id into its full tool-call trace — the exact
-        message it sent and entries it wrote, plus the outcome — so the quality
-        cycle can judge the run against the collection's intent."""
+    async def test_collector_runs_log_renders_runs_from_promptlog(self, tmp_path):
+        """collector-runs is a read facade over promptlog: log_read renders each
+        worked run as a record (``[target] summary`` + its tool trace) — no
+        stored entries, no keys, no get.  This is the quality collector's review."""
         db = _make_db(tmp_path)
+        await LogCreateTool(db, None).execute(
+            name="collector-runs", description="audit", inclusion="never", recall="recent"
+        )
         response = {
             "choices": [
                 {
@@ -583,21 +582,17 @@ class TestLogTools:
             run_id="run-42",
             run_target="espresso-gear",
         )
-        db.messages.set_run_outcome("run-42", "worked", "sent an update")
+        db.messages.set_run_outcome("run-42", "worked", "sent an update about a grinder")
 
-        rendered = await LogGetTool(db).execute(run_id="run-42")
+        rendered = await LogReadTool(db, "quality", scope="quality").execute(
+            memory="collector-runs"
+        )
 
-        assert "espresso-gear" in rendered
-        assert "worked" in rendered
-        assert "send_message" in rendered
-        assert "Found a new grinder, $300." in rendered
-
-    @pytest.mark.asyncio
-    async def test_log_get_unknown_run(self, tmp_path):
-        """An id with no promptlog rows reports cleanly rather than crashing."""
-        db = _make_db(tmp_path)
-        rendered = await LogGetTool(db).execute(run_id="nope")
-        assert "No run found" in rendered
+        # collector-runs reads through the uniform log formatter now (it's a log
+        # facade like any other) — framed as a fetched batch, runs as records.
+        assert "from `collector-runs`" in rendered
+        assert "[espresso-gear] sent an update about a grinder" in rendered
+        assert "Found a new grinder, $300." in rendered  # the exact message, untruncated
 
     @pytest.mark.asyncio
     async def test_append_to_system_log_is_refused(self, tmp_path, mock_llm):
@@ -945,7 +940,7 @@ class TestAuthorAttribution:
             db, _make_llm_client(mock_llm), author="preference-extractor"
         ).execute(memory="likes", entries=[{"key": "k", "content": "v"}])
 
-        rows = db.memories.get_entry("likes", "k")
+        rows = db.memory("likes").get("k")
         assert rows[0].author == "preference-extractor"
 
 
@@ -980,8 +975,8 @@ class TestCollectionMerge:
         assert "2 moved" in result
         assert "archived" in result
         assert db.memories.get("src").archived is True
-        assert len(db.memories.read_all("dst")) == 2
-        assert len(db.memories.read_all("src")) == 0
+        assert len(db.memory("dst").read_all()) == 2
+        assert len(db.memory("src").read_all()) == 0
 
     @pytest.mark.asyncio
     async def test_merge_drops_colliding_keys(self, tmp_path, mock_llm):
@@ -1013,7 +1008,7 @@ class TestCollectionMerge:
 
         assert "1 moved" in result
         assert "1 dropped" in result
-        dst_entries = db.memories.read_all("dst")
+        dst_entries = db.memory("dst").read_all()
         assert len(dst_entries) == 2
         contents = {e.key: e.content for e in dst_entries}
         assert contents["shared"] == "already in dst"  # destination wins
@@ -1105,11 +1100,11 @@ class TestFactory:
     _FULL_SURFACE = {
         # Reads
         "collection_get",
+        "collection_read_latest",
         "collection_read_random",
         "collection_keys",
-        "collection_metadata",
+        "memory_metadata",
         "log_read",
-        "read_latest",
         "read_similar",
         "exists",
         # Lifecycle (shape)
@@ -1181,7 +1176,7 @@ class TestScopedFactory:
 
         assert "Refused" in result and "likes" in result and "dislikes" in result
         # And nothing was actually written
-        assert db.memories.get_entry("dislikes", "k") == []
+        assert db.memory("dislikes").get("k") == []
 
     @pytest.mark.asyncio
     async def test_scoped_write_allows_target_collection(self, tmp_path, mock_llm):
@@ -1202,7 +1197,7 @@ class TestScopedFactory:
         result = await write.execute(memory="likes", entries=[{"key": "k", "content": "v"}])
 
         assert "Wrote 1 entry" in result
-        assert db.memories.get_entry("likes", "k")[0].content == "v"
+        assert db.memory("likes").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_update_entry_rejects_other_collection(self, tmp_path):
@@ -1242,7 +1237,7 @@ class TestScopedFactory:
         move = CollectionMoveTool(db, author="collector:dst", scope="dst")
         result = await move.execute(key="k", from_memory="src", to_memory="dst")
         assert "Moved 'k'" in result
-        assert db.memories.get_entry("dst", "k")[0].content == "v"
+        assert db.memory("dst").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_move_defaults_to_memory_from_scope(self, tmp_path, mock_llm):
@@ -1273,7 +1268,7 @@ class TestScopedFactory:
         move = CollectionMoveTool(db, author="collector:dst", scope="dst")
         result = await move.execute(key="k", from_memory="src")
         assert "Moved 'k'" in result
-        assert db.memories.get_entry("dst", "k")[0].content == "v"
+        assert db.memory("dst").get("k")[0].content == "v"
 
     @pytest.mark.asyncio
     async def test_scoped_move_to_memory_not_required_in_schema(self, tmp_path):
