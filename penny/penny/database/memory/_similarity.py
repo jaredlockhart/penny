@@ -137,6 +137,17 @@ _WRITE_BAILOUT_PHRASES: frozenset[str] = frozenset(
 )
 
 
+def is_blank(content: str) -> bool:
+    """Return True if ``content`` carries no word tokens at all.
+
+    The conservative "is this empty?" predicate — whitespace, punctuation, or
+    ellipsis only.  Distinct from the fuller :func:`degenerate_reason` (which
+    also rejects bare URLs and bail-out phrases): a blank check is safe for any
+    text field, including log appends where a bare URL may be legitimate.
+    """
+    return not _WORD_TOKEN_RE.findall(content)
+
+
 def degenerate_reason(content: str) -> str | None:
     """Return a rejection reason if ``content`` is too degenerate to store.
 
@@ -145,7 +156,7 @@ def degenerate_reason(content: str) -> str | None:
     Applied at collection write time to keep the corpus clean.
     """
     stripped = content.strip()
-    if not _WORD_TOKEN_RE.findall(stripped):
+    if is_blank(stripped):
         return "content has no word tokens (empty, punctuation, or ellipsis only)"
     if _BARE_URL_RE.match(stripped):
         return "content is a bare URL with no descriptive text"

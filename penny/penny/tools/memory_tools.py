@@ -35,6 +35,8 @@ from penny.database.memory import (
     MemoryNotFoundError,
     RecallMode,
     WriteResult,
+    degenerate_reason,
+    is_blank,
 )
 from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
@@ -156,6 +158,18 @@ def check_extraction_prompt(prompt: str | None) -> str | None:
         f"{EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
         f"(see the collection_create description for the required shape)."
     )
+
+
+def check_description(description: str) -> str | None:
+    """Return an error string if a required description is blank, else None.
+
+    The description doubles as the stage-1 routing anchor, so a blank one
+    would create a memory that can never be matched.  Reject it loudly rather
+    than embedding an empty string.
+    """
+    if is_blank(description):
+        return "description cannot be blank — provide a content-reflective one-line summary."
+    return None
 
 
 def _humanize_interval(seconds: int | None) -> str:
@@ -337,6 +351,8 @@ class CollectionCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = CollectionCreateArgs(**kwargs)
+        if error := check_description(args.description):
+            return ToolResult(message=error, success=False)
         if error := check_extraction_prompt(args.extraction_prompt):
             return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
@@ -394,6 +410,8 @@ class LogCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = LogCreateArgs(**kwargs)
+        if error := check_description(args.description):
+            return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
         self._db.memories.create_log(
             args.name,
@@ -475,7 +493,11 @@ class CollectionGetTool(MemoryTool):
         args = CollectionGetArgs(**kwargs)
         rows = _resolve(self._db, args.memory).get(args.key)
         if not rows:
-            return ToolResult(message=f"Key '{args.key}' not found in '{args.memory}'.")
+            return ToolResult(
+                message=f"Key '{args.key}' not found in '{args.memory}'. List the available "
+                f"keys with collection_keys('{args.memory}'), or search by content with "
+                f"read_similar."
+            )
         return ToolResult(message=_format_entries(rows, source=args.memory))
 
 
@@ -573,7 +595,9 @@ class ReadSimilarTool(MemoryTool):
                 "%s: similarity search unavailable — no embedding model configured", self.name
             )
             return ToolResult(
-                message="(similarity search unavailable — no embedding model configured)",
+                message="Similarity search unavailable — no embedding model is configured. "
+                "Read this memory with collection_read_latest (collections) or log_read (logs) "
+                "instead; they don't need embeddings.",
                 success=False,
             )
         entries = _resolve(self._db, args.memory).read_similar(vec, args.k)
@@ -710,7 +734,11 @@ class CollectionWriteTool(MemoryTool):
             )
         if rejected:
             labelled = [f"{r.key} ({r.reason})" for r in rejected]
-            parts.append(f"Rejected as degenerate content: {', '.join(labelled)}.")
+            parts.append(
+                f"Rejected as degenerate content: {', '.join(labelled)}.  "
+                f"Re-write these with substantive descriptive text (not a bare URL, "
+                f"punctuation, or a bail-out phrase)."
+            )
         message = " ".join(parts) if parts else "(no entries written)"
         # Work only if a row actually landed — a fully duplicate/rejected batch
         # changed nothing, so it must read as no-work for the throttle.
@@ -751,9 +779,20 @@ class UpdateEntryTool(MemoryTool):
                 f"not '{args.memory}'.",
                 success=False,
             )
+        if reason := degenerate_reason(args.content):
+            return ToolResult(
+                message=f"Refused: replacement content rejected — {reason}. "
+                f"Provide the full replacement text, or use collection_delete_entry "
+                f"if you meant to remove '{args.key}'.",
+                success=False,
+            )
         outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)
         if outcome == "not_found":
-            return ToolResult(message=f"Key '{args.key}' not found in '{args.memory}'.")
+            return ToolResult(
+                message=f"Key '{args.key}' not found in '{args.memory}' — update only replaces "
+                f"existing entries. Write it as a new entry with collection_write, or list the "
+                f"current keys with collection_keys('{args.memory}') if you expected it to exist."
+            )
         return ToolResult(message=f"Updated '{args.key}' in '{args.memory}'.", mutated=True)
 
 
@@ -990,10 +1029,16 @@ class CollectionMoveTool(MemoryTool):
         source = _resolve(self._db, args.from_memory)
         outcome = source.move(args.key, args.to_memory, author=self._author)
         if outcome == "not_found":
-            return ToolResult(message=f"Key '{args.key}' not found in '{args.from_memory}'.")
+            return ToolResult(
+                message=f"Key '{args.key}' not found in '{args.from_memory}' — nothing to move. "
+                f"List the current keys with collection_keys('{args.from_memory}') to find the "
+                f"right one."
+            )
         if outcome == "collision":
             return ToolResult(
-                message=f"Cannot move: '{args.to_memory}' already has a '{args.key}' entry."
+                message=f"Cannot move: '{args.to_memory}' already has a '{args.key}' entry. "
+                f"Delete the destination entry first with collection_delete_entry, or use "
+                f"collection_merge to combine the two collections."
             )
         return ToolResult(
             message=f"Moved '{args.key}' from '{args.from_memory}' to '{args.to_memory}'.",
@@ -1090,7 +1135,10 @@ class CollectionDeleteEntryTool(MemoryTool):
             )
         removed = _resolve(self._db, args.memory).delete(args.key)
         if removed == 0:
-            return ToolResult(message=f"No entry with key '{args.key}' in '{args.memory}'.")
+            return ToolResult(
+                message=f"No entry with key '{args.key}' in '{args.memory}' — nothing to delete. "
+                f"List the current keys with collection_keys('{args.memory}') to find it."
+            )
         return ToolResult(message=f"Deleted '{args.key}' from '{args.memory}'.", mutated=True)
 
 
@@ -1212,6 +1260,11 @@ class LogAppendTool(MemoryTool):
                 message=f"Refused: '{args.memory}' is a system log written automatically "
                 "every turn (conversation and run history) — you can't append to "
                 "it. Use a collection or a log you created for your own notes.",
+                success=False,
+            )
+        if is_blank(args.content):
+            return ToolResult(
+                message="Refused: log entry content is blank — provide non-empty text.",
                 success=False,
             )
         vec = await embed_text(self._llm, args.content)
