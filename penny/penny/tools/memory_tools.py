@@ -35,6 +35,8 @@ from penny.database.memory import (
     MemoryNotFoundError,
     RecallMode,
     WriteResult,
+    degenerate_reason,
+    is_blank,
 )
 from penny.database.models import MemoryEntry
 from penny.llm.similarity import embed_text
@@ -156,6 +158,18 @@ def check_extraction_prompt(prompt: str | None) -> str | None:
         f"{EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
         f"(see the collection_create description for the required shape)."
     )
+
+
+def check_description(description: str) -> str | None:
+    """Return an error string if a required description is blank, else None.
+
+    The description doubles as the stage-1 routing anchor, so a blank one
+    would create a memory that can never be matched.  Reject it loudly rather
+    than embedding an empty string.
+    """
+    if is_blank(description):
+        return "description cannot be blank — provide a content-reflective one-line summary."
+    return None
 
 
 def _humanize_interval(seconds: int | None) -> str:
@@ -337,6 +351,8 @@ class CollectionCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = CollectionCreateArgs(**kwargs)
+        if error := check_description(args.description):
+            return ToolResult(message=error, success=False)
         if error := check_extraction_prompt(args.extraction_prompt):
             return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
@@ -394,6 +410,8 @@ class LogCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = LogCreateArgs(**kwargs)
+        if error := check_description(args.description):
+            return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
         self._db.memories.create_log(
             args.name,
@@ -749,6 +767,11 @@ class UpdateEntryTool(MemoryTool):
             return ToolResult(
                 message=f"Refused: this collector can only write to '{self._scope}', "
                 f"not '{args.memory}'.",
+                success=False,
+            )
+        if reason := degenerate_reason(args.content):
+            return ToolResult(
+                message=f"Refused: replacement content rejected — {reason}.",
                 success=False,
             )
         outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)
@@ -1212,6 +1235,11 @@ class LogAppendTool(MemoryTool):
                 message=f"Refused: '{args.memory}' is a system log written automatically "
                 "every turn (conversation and run history) — you can't append to "
                 "it. Use a collection or a log you created for your own notes.",
+                success=False,
+            )
+        if is_blank(args.content):
+            return ToolResult(
+                message="Refused: log entry content is blank — provide non-empty text.",
                 success=False,
             )
         vec = await embed_text(self._llm, args.content)

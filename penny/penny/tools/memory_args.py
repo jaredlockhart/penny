@@ -43,6 +43,27 @@ def _normalize_dash_list(value: object) -> object:
 MemoryName = Annotated[str, BeforeValidator(_normalize_dashes)]
 MemoryNameList = Annotated[list[str], BeforeValidator(_normalize_dash_list)]
 
+
+def _blank_to_none(value: object) -> object:
+    """Collapse a blank string to ``None`` so an update treats it as "omitted".
+
+    Models routinely emit ``""`` for an optional field they mean to leave
+    unchanged — gpt-oss was observed passing ``extraction_prompt=""`` alongside
+    a recall change, reasoning "they will not be updated".  But the update layer
+    applies any value that ``is not None``, so a blank string would overwrite:
+    silently blanking a ``description`` (and re-embedding empty as its stage-1
+    routing anchor) or raising on an enum.  None of these fields has a
+    meaningful empty value, so a blank means "skip", never "set to empty".
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# Optional text on an update: a blank string is coerced to ``None`` (omitted)
+# rather than written through, so it can never clobber the existing value.
+OptionalText = Annotated[str | None, BeforeValidator(_blank_to_none)]
+
 # ── Metadata ────────────────────────────────────────────────────────────────
 
 
@@ -95,14 +116,17 @@ class CollectionUpdateArgs(BaseModel):
     """Update a collection's metadata.
 
     All fields after ``name`` are optional — only the ones explicitly set
-    are applied.  ``inclusion`` and ``recall`` are validated in the store layer.
+    are applied.  A blank string counts as "not set": the ``OptionalText``
+    fields coerce ``""`` to ``None`` so a field the model passes empty (to
+    mean "leave it alone") is skipped rather than overwriting the existing
+    value.  ``inclusion`` and ``recall`` are validated in the store layer.
     """
 
     name: MemoryName
-    description: str | None = None
-    inclusion: str | None = None  # "always" | "relevant" | "never"
-    recall: str | None = None  # "all" | "relevant" | "recent"
-    extraction_prompt: str | None = None
+    description: OptionalText = None
+    inclusion: OptionalText = None  # "always" | "relevant" | "never"
+    recall: OptionalText = None  # "all" | "relevant" | "recent"
+    extraction_prompt: OptionalText = None
     collector_interval_seconds: int | None = None
 
 

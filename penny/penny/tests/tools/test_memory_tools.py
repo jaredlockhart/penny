@@ -192,6 +192,23 @@ class TestCreateAndList:
         assert db.memories.get("notes") is None  # collection not created
 
     @pytest.mark.asyncio
+    async def test_create_rejects_blank_description(self, tmp_path):
+        # The description doubles as the stage-1 routing anchor — a blank one
+        # would embed an empty string and never match, so it's refused.
+        db = _make_db(tmp_path)
+        result = await CollectionCreateTool(db, None).execute(
+            name="notes",
+            description="   ",
+            inclusion="never",
+            recall="recent",
+            extraction_prompt="test fixture extraction prompt that is long enough",
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+        assert "description cannot be blank" in result.message
+        assert db.memories.get("notes") is None  # collection not created
+
+    @pytest.mark.asyncio
     async def test_create_rejects_missing_extraction_prompt(self, tmp_path):
         # extraction_prompt is required — a collection without one is passive
         # (nothing fills it), so the tool surface refuses to create one.
@@ -253,6 +270,35 @@ class TestCreateAndList:
         assert "too short" in result.message
         # Update rejected — original prompt preserved unchanged
         assert db.memories.get("notes").extraction_prompt == original_prompt
+
+    @pytest.mark.asyncio
+    async def test_update_treats_blank_fields_as_omitted(self, tmp_path, mock_llm):
+        # Models emit "" for an optional field they mean to leave alone (gpt-oss
+        # was observed passing extraction_prompt="" alongside a recall change).
+        # A blank must be skipped, not written through: the recall change lands
+        # while the existing prompt/description survive untouched.
+        db = _make_db(tmp_path)
+        original_prompt = "test fixture extraction prompt that is long enough"
+        await CollectionCreateTool(db, None).execute(
+            name="notes",
+            description="real description",
+            inclusion="relevant",
+            recall="all",
+            extraction_prompt=original_prompt,
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+        result = await CollectionUpdateTool(db, None).execute(
+            name="notes",
+            recall="relevant",
+            extraction_prompt="",
+            description="   ",
+        )
+        assert "Updated" in result.message
+        updated = db.memories.get("notes")
+        assert updated.recall == "relevant"  # the real change landed
+        assert updated.extraction_prompt == original_prompt  # blank skipped, not blanked
+        assert updated.description == "real description"  # blank skipped, not blanked
 
 
 class TestCollectionWritesAndReads:
@@ -428,6 +474,14 @@ class TestCollectionMutations:
         assert "Updated 'k' in 'likes'" in result.message
         fetched = await CollectionGetTool(db).execute(memory="likes", key="k")
         assert "new" in fetched.message
+        # A blank replacement is refused (same content bar as collection_write),
+        # leaving the existing content untouched rather than blanking the entry.
+        blank = await UpdateEntryTool(db, author="test").execute(
+            memory="likes", key="k", content="   "
+        )
+        assert blank.success is False
+        assert "no word tokens" in blank.message
+        assert "new" in (await CollectionGetTool(db).execute(memory="likes", key="k")).message
 
     @pytest.mark.asyncio
     async def test_update_missing_reports_not_found(self, tmp_path):
@@ -549,11 +603,15 @@ class TestLogTools:
         await LogCreateTool(db, None).execute(
             name="events", description="x", inclusion="always", recall="recent"
         )
-        await LogAppendTool(db, _make_llm_client(mock_llm), author="test").execute(
-            memory="events", content="hello"
-        )
+        append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        await append.execute(memory="events", content="hello")
         rendered = await LogReadTool(db, "chat", scope=None).execute(memory="events")
         assert "hello" in rendered.message
+        # A blank append is refused (blank-only — a bare URL is still a valid log
+        # entry), so nothing degenerate joins the stream.
+        blank = await append.execute(memory="events", content="   ")
+        assert blank.success is False
+        assert "blank" in blank.message
 
     @pytest.mark.asyncio
     async def test_collector_runs_log_renders_runs_from_promptlog(self, tmp_path):
