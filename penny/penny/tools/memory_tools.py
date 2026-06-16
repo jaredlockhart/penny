@@ -771,7 +771,9 @@ class UpdateEntryTool(MemoryTool):
             )
         if reason := degenerate_reason(args.content):
             return ToolResult(
-                message=f"Refused: replacement content rejected — {reason}.",
+                message=f"Refused: replacement content rejected — {reason}. "
+                f"Provide the full replacement text, or use collection_delete_entry "
+                f"if you meant to remove '{args.key}'.",
                 success=False,
             )
         outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)

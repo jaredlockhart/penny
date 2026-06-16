@@ -480,7 +480,8 @@ class TestCollectionMutations:
             memory="likes", key="k", content="   "
         )
         assert blank.success is False
-        assert "no word tokens" in blank.message
+        assert "no word tokens" in blank.message  # what went wrong
+        assert "collection_delete_entry" in blank.message  # how to correct it
         assert "new" in (await CollectionGetTool(db).execute(memory="likes", key="k")).message
 
     @pytest.mark.asyncio
