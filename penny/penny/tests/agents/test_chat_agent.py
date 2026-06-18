@@ -902,6 +902,54 @@ async def test_recall_relevant_mode_log_expands_with_temporal_neighbors(
 
 
 @pytest.mark.asyncio
+async def test_recall_relevant_mode_log_caps_neighbor_expansion(
+    signal_server, mock_llm, test_config, running_penny
+):
+    """Temporal expansion is bounded: each hit keeps at most
+    ``MEMORY_NEIGHBOR_PER_HIT`` entries (the hit plus its nearest-in-time
+    neighbours), so a dense burst around a hit can't drag every entry into the
+    prompt.  Here six entries sit inside the ±window; only the hit and its two
+    closest neighbours survive — the three farther ones are dropped."""
+    async with running_penny(test_config) as penny:
+        penny.db.memories.create_log(
+            "conversation-test", "shared chat log", Inclusion.RELEVANT, RecallMode.RELEVANT
+        )
+        hit = "dark roast coffee notes from this week"
+        # Five unrelated neighbours, all inside the ±5min window but at varying distance.
+        neighbours = {
+            "neighbour plus one minute away": 1,
+            "neighbour minus one minute away": -1,
+            "neighbour plus two minutes away": 2,
+            "neighbour minus two minutes away": -2,
+            "neighbour plus three minutes away": 3,
+        }
+        for content in (hit, *neighbours):
+            _write_embedded(penny.db, "conversation-test", None, content)
+
+        base = datetime.now(UTC)
+        _backfill_created_at(penny.db, "conversation-test", hit, base)
+        for content, offset in neighbours.items():
+            _backfill_created_at(
+                penny.db, "conversation-test", content, base + timedelta(minutes=offset)
+            )
+        _install_hash_embedding(penny.chat_agent)
+
+        # limit=1 isolates the single keyword hit; per-hit cap (3) then keeps the
+        # hit + its two nearest neighbours (±1 min), dropping the ±2 / +3 ones.
+        result = await penny.chat_agent._recall_section(
+            current_message="dark roast coffee", limit=1
+        )
+
+        assert result is not None
+        assert hit in result
+        assert "neighbour plus one minute away" in result
+        assert "neighbour minus one minute away" in result
+        assert "neighbour plus two minutes away" not in result
+        assert "neighbour minus two minutes away" not in result
+        assert "neighbour plus three minutes away" not in result
+
+
+@pytest.mark.asyncio
 async def test_recall_relevant_mode_log_excludes_self_match(
     signal_server, mock_llm, test_config, running_penny
 ):

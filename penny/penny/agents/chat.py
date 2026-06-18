@@ -405,10 +405,15 @@ class ChatAgent(Agent):
         """
         if not anchors:
             return []
+        # Logs expand each hit with its temporal neighbors, so they take fewer
+        # hits and cap each hit's window — a hard HIT_LIMIT × PER_HIT ceiling on
+        # an otherwise unbounded fan-out.  Collections don't expand, so they keep
+        # the full ``limit`` of hits.
+        hit_limit = min(limit, PennyConstants.MEMORY_NEIGHBOR_HIT_LIMIT) if memory.is_log else limit
         hits = memory.read_similar_hybrid(
             anchors,
             query_text,
-            k=limit,
+            k=hit_limit,
             exclude_contents=anchor_contents or None,
         )
         # Collections return their hits unchanged; logs expand each hit with its
@@ -416,6 +421,7 @@ class ChatAgent(Agent):
         return memory.expand_with_temporal_neighbors(
             hits,
             PennyConstants.MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES,
+            PennyConstants.MEMORY_NEIGHBOR_PER_HIT,
         )
 
     @staticmethod
