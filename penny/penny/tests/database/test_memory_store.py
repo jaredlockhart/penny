@@ -23,6 +23,7 @@ from penny.database.memory import (
     MemoryTypeError,
     RecallMode,
 )
+from penny.database.memory._similarity import hybrid_rank_ids
 from penny.llm.embeddings import deserialize_embedding, serialize_embedding
 from penny.tools.memory_tools import MemoryMetadataTool
 
@@ -698,6 +699,33 @@ class TestReads:
         assert real in contents
         for junk in ("", "?", "Hey!", "hi penny"):
             assert junk not in contents
+
+    def test_hybrid_rank_demotes_long_coincidental_match(self):
+        """The lexical length penalty drops a long entry that merely *contains*
+        the query terms below genuinely-relevant short entries.
+
+        Two short entries each cover half the query and embed close to the
+        anchor; a long entry covers the whole query (its big token set contains
+        both terms) but embeds far from the anchor. Without length
+        normalization the long entry's full coverage lifts it above a short
+        on-topic entry; the sqrt penalty (``MEMORY_LEXICAL_LENGTH_B``) demotes
+        it to last, where its weak cosine also puts it.
+        """
+        anchor = [1.0, 0.0, 0.0]
+        fillers = " ".join(f"filler{i}" for i in range(60))
+        docs = [
+            (1, "alpha", [0.99, 0.141, 0.0]),  # on-topic, short, strongest cosine
+            (2, f"alpha beta {fillers}", [0.6, 0.8, 0.0]),  # coincidental, long, weakest cosine
+            (3, "beta", [0.95, 0.312, 0.0]),  # on-topic, short
+        ]
+        ranked = hybrid_rank_ids(
+            [serialize_embedding(vec) for _, _, vec in docs],
+            [content for _, content, _ in docs],
+            [entry_id for entry_id, _, _ in docs],
+            [anchor],
+            "alpha beta",
+        )
+        assert ranked[-1] == 2  # the long coincidental entry ranks last, not lifted by coverage
 
     def test_keys_returns_unique_in_insertion_order(self, tmp_path):
         db = _make_db(tmp_path)

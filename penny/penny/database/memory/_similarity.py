@@ -266,8 +266,28 @@ def hybrid_rank_ids(
     document_tokens = [tokens(content) for content in contents]
     idf_map = idf(document_tokens)
     coverage = np.array([lexical_coverage(query_tokens, doc, idf_map) for doc in document_tokens])
+    coverage = _length_normalize(coverage, document_tokens)
     lexical_rank = [ids[i] for i in np.argsort(-coverage)]
     return reciprocal_rank_fusion([cosine_rank, lexical_rank])
+
+
+def _length_normalize(coverage: np.ndarray, document_tokens: list[set[str]]) -> np.ndarray:
+    """Damp lexical coverage by a sub-linear function of entry length.
+
+    A long entry has a large token set, so it coincidentally contains more of
+    any query's terms and wins the lexical leg on surface area alone — the
+    long-document bias.  Dividing coverage by ``(1-b) + b*sqrt(len/avglen)``
+    demotes those coincidental matches (modest coverage) while leaving genuinely
+    on-topic long entries (near-full coverage + strong cosine) in place.  The
+    penalty is ~flat — effectively inert — when entry lengths are uniform.
+    """
+    doc_len = np.array([len(doc) for doc in document_tokens], dtype=np.float32)
+    mean_len = float(doc_len.mean()) if doc_len.size else 0.0
+    if mean_len <= 0.0:
+        return coverage
+    b = PennyConstants.MEMORY_LEXICAL_LENGTH_B
+    length_norm = (1.0 - b) + b * np.sqrt(doc_len / mean_len)
+    return coverage / length_norm
 
 
 def score_against_anchors(

@@ -275,7 +275,7 @@ class Memory:
         return ranked if k is None else ranked[:k]
 
     def expand_with_temporal_neighbors(
-        self, hits: list[MemoryEntry], window_minutes: int
+        self, hits: list[MemoryEntry], window_minutes: int, per_hit_cap: int | None = None
     ) -> list[MemoryEntry]:
         """Collections have no conversational timeline — return hits unchanged.
         Overridden by ``Log`` to pull in surrounding entries of each hit."""
@@ -566,23 +566,36 @@ class Log(Memory):
         return self.read_recent(window_seconds, limit)
 
     def expand_with_temporal_neighbors(
-        self, hits: list[MemoryEntry], window_minutes: int
+        self, hits: list[MemoryEntry], window_minutes: int, per_hit_cap: int | None = None
     ) -> list[MemoryEntry]:
-        """Augment each hit with every entry within ±``window_minutes`` of it —
-        so a single keyword match pulls in its surrounding conversation rather
-        than a line stripped of context.  Union, deduped by id, chronological."""
+        """Augment each hit with entries within ±``window_minutes`` of it — so a
+        single keyword match pulls in its surrounding conversation rather than a
+        line stripped of context.  Union, deduped by id, chronological.
+
+        ``per_hit_cap`` bounds each hit's window to its ``cap`` nearest-in-time
+        entries (the hit included).  Without it the expansion is unbounded — a
+        dense burst around a hit drags every entry in it into the prompt."""
         if not hits:
             return []
         delta = timedelta(minutes=window_minutes)
         seen_ids: set[int] = set()
         expanded: list[MemoryEntry] = []
         for hit in hits:
-            for row in self._rows_in_window(hit.created_at - delta, hit.created_at + delta):
+            window = self._rows_in_window(hit.created_at - delta, hit.created_at + delta)
+            if per_hit_cap is not None and len(window) > per_hit_cap:
+                window = self._nearest_in_time(window, hit.created_at, per_hit_cap)
+            for row in window:
                 if row.id is not None and row.id not in seen_ids:
                     seen_ids.add(row.id)
                     expanded.append(row)
         expanded.sort(key=lambda row: row.created_at)
         return expanded
+
+    @staticmethod
+    def _nearest_in_time(rows: list[MemoryEntry], pivot: datetime, cap: int) -> list[MemoryEntry]:
+        """The ``cap`` entries closest in time to ``pivot`` (the hit, distance 0,
+        is always among them)."""
+        return sorted(rows, key=lambda row: abs(row.created_at - pivot))[:cap]
 
 
 class MessageLogMemory(Log):

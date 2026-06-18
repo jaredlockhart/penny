@@ -282,6 +282,31 @@ class PennyConstants:
     # but live in the same conversation as a real hit.
     MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES = 5
 
+    # Bounded neighbor expansion for ``relevant``-mode LOG recall.  Without a
+    # cap the expansion is unbounded: each hybrid hit pulls in *every* entry
+    # within ±MEMORY_RELEVANT_NEIGHBOR_WINDOW_MINUTES, so a dense burst of
+    # messages around a single hit can drag dozens of entries (often huge
+    # replies) into the prompt.  We take at most MEMORY_NEIGHBOR_HIT_LIMIT
+    # hybrid hits, then expand each to at most MEMORY_NEIGHBOR_PER_HIT entries
+    # (the hit plus its nearest-in-time neighbors inside the window) — a hard
+    # ceiling of HIT_LIMIT × PER_HIT entries.  Logs only; collections never
+    # expand.
+    MEMORY_NEIGHBOR_HIT_LIMIT = 3
+    MEMORY_NEIGHBOR_PER_HIT = 3
+
+    # Length normalization for the lexical leg of hybrid recall ranking.
+    # ``lexical_coverage`` is the IDF-weighted fraction of the query's tokens an
+    # entry contains — but a long entry has a big token set, so it coincidentally
+    # covers more of *any* query and wins the lexical leg on surface area alone
+    # (the classic long-document bias BM25 corrects with a length term).
+    # Coverage is divided by ``(1-b) + b*sqrt(len/avglen)``: a sub-linear penalty
+    # that demotes coincidental long-doc matches without unseating genuinely
+    # on-topic long entries (near-full coverage + strong cosine keep their slot).
+    # sqrt compresses the wide length spread of message logs, so the penalty is
+    # active where lengths vary (logs) and ~flat — effectively inert — where they
+    # are uniform (collections).  b=0 disables it.
+    MEMORY_LEXICAL_LENGTH_B = 0.5
+
     # Low-information filter: entries in **log-shaped memories** with
     # fewer than this many word tokens are excluded from the similarity
     # corpus before scoring.  Empty strings, lone punctuation ("?", "…"),
