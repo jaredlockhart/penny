@@ -134,6 +134,12 @@ def _score_knowledge(db: Database, before: object, sent: list[str]) -> list[str]
         fails.append("summary missing the page's subject (antikythera)")
     if "http" not in body:
         fails.append("summary missing the source URL (should lead with it)")
+    # The cycle must close with a real done() call — a run that writes the entry
+    # then narrates "Done. Summary: ..." as prose instead of calling done() is
+    # marked failed and leaves its cursor uncommitted (re-run next tick).  The
+    # text-step nudge exists to keep that slip from ending the cycle.
+    if not tool_was_called(db, "done"):
+        fails.append("wrote the entry but never closed the cycle with done()")
     return fails
 
 
