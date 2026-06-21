@@ -34,16 +34,23 @@ class RunOutcome(StrEnum):
     ``collector-runs`` log Penny reads, the auto-throttle).  Replaces the old
     ``run_success`` bool, which couldn't tell a clean no-op from real work.
 
-    ``failed`` (errored / hit max steps / no ``done()``) ·
+    ``failed`` (errored, or ended with no successful ``done()`` AND did no real
+    work — a true bail) ·
     ``no_work`` (completed cleanly, changed nothing) ·
     ``worked`` (completed and changed something — a write / update / move /
-    delete / message) · ``cancelled`` (preempted by a foreground message — not
-    a failure, not work; the throttle ignores it).
+    delete / message) ·
+    ``incomplete`` (did real work but never closed with a successful ``done()`` —
+    typically hit max steps mid-cycle; the work is durable so the read cursor
+    still advances and the throttle counts it as productive, but it's flagged
+    distinctly so a too-tight step budget stays visible) ·
+    ``cancelled`` (preempted by a foreground message — not a failure, not work;
+    the throttle ignores it).
     """
 
     FAILED = "failed"
     NO_WORK = "no_work"
     WORKED = "worked"
+    INCOMPLETE = "incomplete"
     CANCELLED = "cancelled"
 
 

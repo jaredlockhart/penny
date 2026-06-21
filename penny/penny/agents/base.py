@@ -339,21 +339,26 @@ class Agent:
         success = any(record.tool == self.terminator_tool for record in response.tool_calls)
 
         if log_read is not None:
-            if self._should_commit_cursor(success):
+            if self._consumed_input(success, response):
                 log_read.commit_pending()
             else:
                 log_read.discard_pending()
 
         return CycleResult(success=success, response=response)
 
-    def _should_commit_cursor(self, success: bool) -> bool:
-        """Whether to commit the log-read cursor after a cycle.
+    @staticmethod
+    def _consumed_input(success: bool, response: ControllerResponse) -> bool:
+        """Did this cycle consume the input it read (→ commit the read cursor)?
 
-        Real cycles commit on success — the entries were consumed.  The dry-run
-        collector overrides this to always discard, so a simulated cycle reads
-        real data without advancing the cursor (non-consuming reads).
+        Yes if it closed via the terminator (``success``), OR if it changed
+        durable state — a cycle that wrote/sent but then hit max steps or trailed
+        off without a ``done()`` still genuinely processed its input, so the
+        cursor must advance.  Otherwise the next tick re-reads the same batch,
+        re-attempts the already-landed work, and dedup-rejects it — a wasted
+        cycle, and (if the batch always blows the step budget) a collection stuck
+        forever.  Reads/refusals/no-ops carry ``mutated=False`` and don't count.
         """
-        return success
+        return success or any(record.mutated for record in response.tool_calls)
 
     # ── Override hooks ───────────────────────────────────────────────────
 

@@ -235,17 +235,21 @@ class Collector(BackgroundAgent):
         """The cycle's outcome + its summary — the single determination read by
         the audit log, the promptlog tag, and the throttle.
 
-        ``done(success=False)`` / max-steps / a crashed cycle → ``failed``.  A
-        clean completion is ``worked`` or ``no_work`` by whether a state-
-        changing tool actually fired (``_produced_work``).  (``cancelled`` is
+        A successful ``done()`` is ``worked`` or ``no_work`` by whether a state-
+        changing tool actually fired (``_produced_work``).  Without a successful
+        ``done()`` the split is by work too: a cycle that still changed durable
+        state (the model hit max steps / trailed off after writing) is
+        ``incomplete`` — real work landed, it just never closed cleanly — while
+        one that changed nothing is a true ``failed`` bail.  (``cancelled`` is
         handled separately — a preempted cycle never reaches here.)
         """
         success, summary = cls._extract_done_args(response)
-        if not success:
-            return RunOutcome.FAILED, summary
-        if cls._produced_work(response):
-            return RunOutcome.WORKED, summary
-        return RunOutcome.NO_WORK, summary
+        produced = cls._produced_work(response)
+        if success:
+            return (RunOutcome.WORKED if produced else RunOutcome.NO_WORK), summary
+        if produced:
+            return RunOutcome.INCOMPLETE, summary
+        return RunOutcome.FAILED, summary
 
     def _apply_throttle(self, collection: MemoryRow, outcome: RunOutcome) -> None:
         """Auto-tune the collection's interval from this cycle's outcome.
@@ -256,9 +260,10 @@ class Collector(BackgroundAgent):
         they run, so it never idles its way into a wider interval (which would
         just re-create the catch-up lag the gate exists to remove).
 
-        A ``worked`` cycle snaps the interval back to the user's set cadence
+        A productive cycle (``worked`` or ``incomplete`` — both changed durable
+        state) snaps the interval back to the user's set cadence
         (``base_interval_seconds``) and clears the idle counter.  After
-        ``COLLECTOR_THROTTLE_AFTER`` consecutive non-``worked`` cycles the
+        ``COLLECTOR_THROTTLE_AFTER`` consecutive non-productive cycles the
         interval doubles (capped at ``COLLECTOR_MAX_INTERVAL``) and the counter
         resets.  ``COLLECTOR_THROTTLE_AFTER = 0`` disables it.
 
@@ -271,7 +276,7 @@ class Collector(BackgroundAgent):
         current = collection.collector_interval_seconds
         if threshold <= 0 or base is None or current is None:
             return
-        if outcome == RunOutcome.WORKED:
+        if outcome in (RunOutcome.WORKED, RunOutcome.INCOMPLETE):
             interval, idle = base, 0
         elif self._live_cursors(collection):
             # Log-driven collection: the cursor gate already skips its idle

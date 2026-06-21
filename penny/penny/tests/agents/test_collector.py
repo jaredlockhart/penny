@@ -347,9 +347,10 @@ def _target() -> MemoryRow:
 
 
 def test_cycle_result_classifies_worked_no_work_failed():
-    """One determination: ``done(success=False)`` / no done() → ``failed``; a
-    clean completion → ``worked`` or ``no_work`` by whether a state-changing
-    tool actually fired."""
+    """One determination, split by clean-close AND by whether real work landed:
+    successful ``done()`` → ``worked``/``no_work``; no successful ``done()`` but
+    durable work changed → ``incomplete`` (the work is real, it just never closed
+    cleanly); no successful ``done()`` and nothing changed → ``failed`` bail."""
     worked = ControllerResponse(
         answer="",
         tool_calls=[
@@ -368,12 +369,32 @@ def test_cycle_result_classifies_worked_no_work_failed():
     )
     assert Collector._cycle_result(no_work) == (RunOutcome.NO_WORK, "no new matches")
 
+    # Wrote durable state but never closed with a successful done() (hit max
+    # steps / trailed off) → incomplete, NOT failed: the work landed.
+    incomplete = ControllerResponse(
+        answer="",
+        tool_calls=[ToolCallRecord(tool="collection_write", arguments={}, mutated=True)],
+    )
+    assert Collector._cycle_result(incomplete)[0] == RunOutcome.INCOMPLETE
+
+    # done(success=False) but real work still landed → incomplete (work is real).
+    failed_done_but_wrote = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="collection_write", arguments={}, mutated=True),
+            ToolCallRecord(tool="done", arguments={"success": False, "summary": "partial"}),
+        ],
+    )
+    assert Collector._cycle_result(failed_done_but_wrote)[0] == RunOutcome.INCOMPLETE
+
+    # done(success=False) with nothing changed → a real failure.
     failed = ControllerResponse(
         answer="",
         tool_calls=[ToolCallRecord(tool="done", arguments={"success": False, "summary": "no URL"})],
     )
     assert Collector._cycle_result(failed)[0] == RunOutcome.FAILED
 
+    # No done() and nothing changed (only a read/browse) → a real bail.
     no_done = ControllerResponse(
         answer="", tool_calls=[ToolCallRecord(tool="browse", arguments={"queries": ["x"]})]
     )
@@ -690,6 +711,22 @@ def test_produced_work_distinguishes_state_changes():
     assert Collector._produced_work(duplicate) is False
 
 
+def test_consumed_input_advances_cursor_on_work_even_without_done():
+    """The read cursor advances when the cycle closed via the terminator OR did
+    real work.  A write that then hit max steps (no done()) still consumed its
+    input — so the cursor must move, else the next tick re-reads the same batch,
+    re-attempts the already-landed write, and dedup-rejects it (a wasted cycle)."""
+    read_only = ControllerResponse(
+        answer="", tool_calls=[ToolCallRecord(tool="log_read", arguments={}, mutated=False)]
+    )
+    # Closed via the terminator → input consumed regardless of work.
+    assert Collector._consumed_input(True, read_only) is True
+    # No terminator, but a real write landed → consumed (advance the cursor).
+    assert Collector._consumed_input(False, _work_response()) is True
+    # No terminator and nothing changed → not consumed; re-read next tick.
+    assert Collector._consumed_input(False, read_only) is False
+
+
 def test_create_stamps_base_interval(test_config, tmp_path):
     """The create cadence becomes the snap-back base."""
     _, db = _make_collector(test_config, tmp_path)
@@ -730,6 +767,15 @@ def test_throttle_backs_off_after_n_idle_runs_then_snaps_back(test_config, tmp_p
 
     # A productive cycle snaps back to the base cadence and clears the counter.
     collector._apply_throttle(_get(db, "quiet"), RunOutcome.WORKED)
+    m = _get(db, "quiet")
+    assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (3600, 0)
+
+    # An ``incomplete`` cycle is productive too (real work landed) — it snaps the
+    # interval back rather than counting toward backoff.
+    for _ in range(3):
+        collector._apply_throttle(_get(db, "quiet"), RunOutcome.NO_WORK)
+    assert _get(db, "quiet").collector_interval_seconds == 7200
+    collector._apply_throttle(_get(db, "quiet"), RunOutcome.INCOMPLETE)
     m = _get(db, "quiet")
     assert (m.collector_interval_seconds, m.consecutive_idle_runs) == (3600, 0)
 

@@ -516,6 +516,11 @@ h1 {
   background: var(--bg-secondary);
 }
 
+.run-outcome-incomplete {
+  color: #fd7e14;
+  background: rgba(253, 126, 20, 0.1);
+}
+
 .run-outcome-cancelled {
   color: #b8860b;
   background: rgba(184, 134, 11, 0.1);
