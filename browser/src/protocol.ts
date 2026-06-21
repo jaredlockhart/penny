@@ -284,7 +284,7 @@ export interface PromptLogRun {
 }
 
 /** First-class outcome of a collector cycle (mirrors penny's RunOutcome). */
-export type RunOutcome = "failed" | "no_work" | "worked" | "cancelled";
+export type RunOutcome = "failed" | "no_work" | "worked" | "incomplete" | "cancelled";
 
 export interface WsIncomingPromptLogsPayload {
   type: typeof WsIncomingType.PromptLogsResponse;

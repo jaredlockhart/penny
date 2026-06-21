@@ -435,12 +435,14 @@ const RUN_OUTCOME_CLASS: Record<RunOutcome, string> = {
   worked: "run-outcome-worked",
   no_work: "run-outcome-no-work",
   failed: "run-outcome-failed",
+  incomplete: "run-outcome-incomplete",
   cancelled: "run-outcome-cancelled",
 };
 const RUN_OUTCOME_LABEL: Record<RunOutcome, string> = {
   worked: "worked",
   no_work: "no work",
   failed: "failed",
+  incomplete: "incomplete",
   cancelled: "cancelled",
 };
 
