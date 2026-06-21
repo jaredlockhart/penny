@@ -8,6 +8,18 @@ to that target, runs the agent loop with the target's extraction prompt
 as instructions and a tool surface scoped to writes against that
 collection only, then stamps ``last_collected_at = now``.
 
+Readiness has a second gate beyond the interval: a *log-driven* collection
+(one that reads a log via ``log_read``, leaving a read cursor) is skipped
+without entering the model whenever every one of its live input logs is
+caught up — ``head <= last_read_at``.  The cursors a collection already
+holds are its declared inputs, so no spec is needed; a cursor whose log the
+prompt no longer names is pruned so it can't keep gating.  This replaces the
+auto-throttle for these collections: instead of widening the interval after
+idle cycles (which stalls catch-up when the log starts moving again), the
+gate runs the collection exactly when — and only when — its inputs advance.
+Generative / collection-driven collections (no log cursor) keep the
+interval + auto-throttle fallback.
+
 Dispatcher pattern (vs. one stateful agent per collection):
   - No agent registry to keep in sync with the DB; reading the DB each
     cycle IS the source of truth.
@@ -238,6 +250,12 @@ class Collector(BackgroundAgent):
     def _apply_throttle(self, collection: MemoryRow, outcome: RunOutcome) -> None:
         """Auto-tune the collection's interval from this cycle's outcome.
 
+        Throttle is now the fallback for collections the cursor gate can't reach
+        — generative / collection-driven ones with no live log cursor.  A
+        log-driven collection is exempt: the gate skips its idle ticks before
+        they run, so it never idles its way into a wider interval (which would
+        just re-create the catch-up lag the gate exists to remove).
+
         A ``worked`` cycle snaps the interval back to the user's set cadence
         (``base_interval_seconds``) and clears the idle counter.  After
         ``COLLECTOR_THROTTLE_AFTER`` consecutive non-``worked`` cycles the
@@ -255,6 +273,13 @@ class Collector(BackgroundAgent):
             return
         if outcome == RunOutcome.WORKED:
             interval, idle = base, 0
+        elif self._live_cursors(collection):
+            # Log-driven collection: the cursor gate already skips its idle
+            # ticks, so it never accrues idle runs to throttle on — and widening
+            # its interval would re-introduce the very catch-up lag the gate
+            # removes (new log entries waiting out a stretched floor).  Pinned at
+            # base; the watermark, not a timer, decides when it runs.
+            return
         else:
             idle = collection.consecutive_idle_runs + 1
             if idle >= threshold:
@@ -364,8 +389,7 @@ class Collector(BackgroundAgent):
             return None
         return min(ready, key=self._overdue_sort_key)
 
-    @staticmethod
-    def _is_ready(memory: MemoryRow, now: datetime) -> bool:
+    def _is_ready(self, memory: MemoryRow, now: datetime) -> bool:
         if memory.archived or memory.extraction_prompt is None:
             return False
         if check_extraction_prompt(memory.extraction_prompt) is not None:
@@ -383,10 +407,57 @@ class Collector(BackgroundAgent):
                 memory.name,
             )
             return False
-        if memory.last_collected_at is None:
-            return True  # Never run — always ready
-        elapsed = (now - _aware(memory.last_collected_at)).total_seconds()
-        return elapsed >= memory.collector_interval_seconds
+        if memory.last_collected_at is not None:
+            elapsed = (now - _aware(memory.last_collected_at)).total_seconds()
+            if elapsed < memory.collector_interval_seconds:
+                return False  # within its cadence floor
+        # Interval floor cleared (or never run).  Now the cursor gate: a
+        # log-driven collection caught up on every live input is skipped without
+        # entering the model — the watermark, not the clock, says there's work.
+        return self._input_pending(memory) is not False
+
+    # ── Cursor gate (skip-when-no-new-input) ──────────────────────────────
+
+    def _input_pending(self, memory: MemoryRow) -> bool | None:
+        """Pre-model gate signal, read from the collection's own read cursors.
+
+        ``True`` — at least one live input log has entries past its cursor: run.
+        ``False`` — every live cursor is caught up: skip, don't enter the model.
+        ``None`` — no live cursor at all: a generative or collection-driven
+        collection (browses, picks from another collection) with no log to gate
+        on; not gate-eligible, so it runs on its plain interval.
+
+        The cursors a collection already holds *are* its declared inputs — no
+        separate spec.  ``commit_pending`` advances a cursor to the newest entry
+        actually consumed, so ``head > last_read_at`` means unread input exists.
+        """
+        live = self._live_cursors(memory)
+        if not live:
+            return None
+        return any(self._log_has_new(log_name, position) for log_name, position in live)
+
+    def _live_cursors(self, memory: MemoryRow) -> list[tuple[str, datetime]]:
+        """The collection's cursors for logs it *still* reads, with positions.
+
+        A cursor whose log is no longer named in the current ``extraction_prompt``
+        was left behind by a since-dropped read (e.g. a migration that removed a
+        ``log_read``); it would lie about what the collection consumes, so it's
+        pruned here — an exact identifier match, deterministic, self-healing.
+        """
+        live: list[tuple[str, datetime]] = []
+        for log_name, position in self.db.cursors.list_for(memory.name):
+            if memory.extraction_prompt is not None and log_name in memory.extraction_prompt:
+                live.append((log_name, position))
+            else:
+                self.db.cursors.clear(memory.name, log_name)
+        return live
+
+    def _log_has_new(self, log_name: str, last_read_at: datetime) -> bool:
+        """Is there ≥1 entry in ``log_name`` past ``last_read_at``?  Uses the same
+        batched read the collector itself would — uniform across every log
+        backing (the ``messagelog`` / ``promptlog`` facades and real logs)."""
+        log = self.db.memory(log_name)
+        return bool(log and log.read_batch(last_read_at, 1))
 
     @staticmethod
     def _overdue_sort_key(memory: MemoryRow) -> datetime:

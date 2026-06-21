@@ -50,6 +50,26 @@ def _get(db: Database, name: str) -> MemoryRow:
     return memory
 
 
+def _memory(db: Database, name: str):
+    """Resolve a memory object that the test just created — asserts it exists."""
+    memory = db.memory(name)
+    assert memory is not None
+    return memory
+
+
+def _backdate_collected(db: Database, name: str, *, minutes: int) -> None:
+    """Push a collection's last_collected_at into the past so its interval floor
+    is clear and only the cursor gate decides readiness."""
+    from sqlalchemy import text
+
+    with db.engine.connect() as conn:
+        conn.execute(
+            text("UPDATE memory SET last_collected_at = :ts WHERE name = :name"),
+            {"ts": (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat(), "name": name},
+        )
+        conn.commit()
+
+
 def test_collector_name_is_singular(test_config, tmp_path):
     """One agent identity ("collector") for promptlog/run tagging across all
     collections.  Read cursors do NOT key on this name — they key on the bound
@@ -752,3 +772,123 @@ def test_editing_interval_resets_base_and_idle(test_config, tmp_path):
     assert m.collector_interval_seconds == 1800
     assert m.base_interval_seconds == 1800
     assert m.consecutive_idle_runs == 0
+
+
+# ── Cursor gate (skip-when-no-new-input) ──────────────────────────────────────
+
+
+def _make_log_driven_collection(db: Database, *, log: str, prompt_names_log: bool) -> None:
+    """A log + a collection whose prompt may or may not name that log."""
+    db.memories.create_log(log, "log", Inclusion.ALWAYS, RecallMode.RECENT)
+    _memory(db, log).append([LogEntryInput(content="first", content_embedding=None)], author="user")
+    prompt = (
+        f'Extract relevant items: call log_read("{log}") then collection_write.'
+        if prompt_names_log
+        else "Extract relevant items from somewhere not named as a log here."
+    )
+    db.memories.create_collection(
+        "watcher",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt=prompt,
+        collector_interval_seconds=60,
+    )
+
+
+async def test_log_driven_collection_skipped_until_its_log_advances(test_config, tmp_path):
+    """A collection caught up on its only input log is skipped without entering
+    the model; a new log entry makes it ready again.  This is the gate that
+    replaces idle-throttling for log-driven collections."""
+    collector, db = _make_collector(test_config, tmp_path)
+    _make_log_driven_collection(db, log="chatter", prompt_names_log=True)
+
+    # No cursor yet → not gate-eligible → runs (the first cycle establishes it).
+    assert collector._next_ready_collection() is not None
+
+    # Simulate a completed read: cursor sits at the head of the log.
+    head = _memory(db, "chatter").read_batch(None, 10)[-1].created_at
+    db.cursors.advance_committed("watcher", "chatter", head)
+    db.memories.mark_collected("watcher")
+    _backdate_collected(db, "watcher", minutes=10)  # clear the interval floor
+
+    # Caught up on its only input → the gate skips it.
+    assert collector._next_ready_collection() is None
+
+    # A new log entry past the cursor → the gate lets it run.
+    _memory(db, "chatter").append(
+        [LogEntryInput(content="second", content_embedding=None)], author="user"
+    )
+    ready = collector._next_ready_collection()
+    assert ready is not None and ready.name == "watcher"
+
+
+async def test_stale_cursor_is_pruned_and_never_gates(test_config, tmp_path):
+    """A cursor for a log the prompt no longer names is pruned, not honoured —
+    so a since-dropped read can't falsely keep a collection running (its log
+    still advancing) nor falsely starve it.  With no live cursor the collection
+    is interval-driven and runs."""
+    collector, db = _make_collector(test_config, tmp_path)
+    _make_log_driven_collection(db, log="chatter", prompt_names_log=False)
+
+    # Leftover cursor for "chatter", which the prompt does NOT name; the log has
+    # advanced far past it.
+    db.cursors.advance_committed("watcher", "chatter", datetime.now(UTC) - timedelta(days=1))
+    db.memories.mark_collected("watcher")
+    _backdate_collected(db, "watcher", minutes=10)
+
+    # Not gated on the stale cursor → runs (interval-driven), and it's pruned.
+    ready = collector._next_ready_collection()
+    assert ready is not None and ready.name == "watcher"
+    assert db.cursors.get("watcher", "chatter") is None
+
+
+def test_log_driven_collection_is_exempt_from_throttle(test_config, tmp_path):
+    """A collection with a live log cursor never throttles — the gate skips its
+    idle ticks, so widening its interval would only stall catch-up.  It stays
+    pinned at base no matter how many no-work cycles are applied."""
+    collector, db = _make_collector(test_config, tmp_path)
+    db.memories.create_log("chatter", "log", Inclusion.ALWAYS, RecallMode.RECENT)
+    db.memories.create_collection(
+        "watcher",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt='Extract via log_read("chatter").',
+        collector_interval_seconds=300,
+    )
+    db.cursors.advance_committed("watcher", "chatter", datetime.now(UTC))
+
+    for _ in range(10):
+        collector._apply_throttle(_get(db, "watcher"), RunOutcome.NO_WORK)
+
+    m = _get(db, "watcher")
+    assert m.collector_interval_seconds == 300
+    assert m.consecutive_idle_runs == 0
+
+
+def test_input_pending_tristate(test_config, tmp_path):
+    """The gate signal: None (no live cursor → interval-driven), False (live
+    cursor, caught up → skip), True (live cursor behind its log → run)."""
+    collector, db = _make_collector(test_config, tmp_path)
+    db.memories.create_log("chatter", "log", Inclusion.ALWAYS, RecallMode.RECENT)
+    db.memories.create_collection(
+        "watcher",
+        "d",
+        Inclusion.NEVER,
+        RecallMode.RECENT,
+        extraction_prompt='Extract via log_read("chatter").',
+        collector_interval_seconds=300,
+    )
+    # No cursor → not gate-eligible.
+    assert collector._input_pending(_get(db, "watcher")) is None
+
+    # Cursor present but the log is empty → caught up.
+    db.cursors.advance_committed("watcher", "chatter", datetime.now(UTC))
+    assert collector._input_pending(_get(db, "watcher")) is False
+
+    # An entry appended past the cursor → input pending.
+    _memory(db, "chatter").append(
+        [LogEntryInput(content="new", content_embedding=None)], author="user"
+    )
+    assert collector._input_pending(_get(db, "watcher")) is True
