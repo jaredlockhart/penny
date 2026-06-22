@@ -726,13 +726,13 @@ class MessageStore:
                 run_reason = p.run_reason
                 break
 
-        # The bound collection is stamped on every prompt at write time (all
-        # prompts in a run share it), so read it straight off the first prompt
-        # that carries one — independent of the outcome, which an in-progress or
-        # never-tagged run may lack.  Tying it to the outcome dropped run_target
-        # for outcome-less runs, and the addon then rendered the bare agent
-        # identity ("collector") instead of the collection name.
-        run_target: str | None = next((p.run_target for p in prompts if p.run_target), None)
+        # The bound collection is fixed for the whole cycle and stamped on every
+        # prompt at write time, so all prompts in a run carry the same run_target
+        # — read it off the first one.  It must NOT be coupled to the outcome
+        # (only the last prompt carries that); doing so dropped run_target for
+        # outcome-less runs (in-progress / never-tagged) and the addon then
+        # rendered the bare agent identity ("collector") instead of the name.
+        run_target = prompts[0].run_target
 
         return {
             "run_id": run_id,
