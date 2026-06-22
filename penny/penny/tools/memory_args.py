@@ -241,14 +241,6 @@ class UpdateEntryArgs(BaseModel):
     content: str
 
 
-class CollectionMoveArgs(BaseModel):
-    """Move an entry between collections by key."""
-
-    key: str
-    from_memory: MemoryName
-    to_memory: MemoryName
-
-
 class CollectionMergeArgs(BaseModel):
     """Merge all entries from one collection into another, then archive the source."""
 

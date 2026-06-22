@@ -47,7 +47,6 @@ from penny.tools.memory_args import (
     CollectionEntrySpec,
     CollectionGetArgs,
     CollectionMergeArgs,
-    CollectionMoveArgs,
     CollectionUpdateArgs,
     CollectionWriteArgs,
     DoneArgs,
@@ -1011,78 +1010,6 @@ class MemoryMetadataTool(MemoryTool):
         return "\n".join(lines)
 
 
-class CollectionMoveTool(MemoryTool):
-    """Move an entry between collections by key."""
-
-    name = "collection_move"
-    description = (
-        "Move the entry with the given key from one collection to another. "
-        "Fails with 'collision' if the target already has an entry with that key."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "key": {"type": "string"},
-            "from_memory": {"type": "string"},
-            "to_memory": {"type": "string"},
-        },
-        "required": ["key", "from_memory", "to_memory"],
-    }
-
-    def __init__(self, db: Database, author: str, scope: str | None = None) -> None:
-        self._db = db
-        self._author = author
-        self._scope = scope
-        if scope is not None:
-            # When scoped, to_memory is always the bound collection — make it optional
-            # so the model doesn't fail validation if it omits the predetermined value.
-            self.parameters = {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string"},
-                    "from_memory": {"type": "string"},
-                    "to_memory": {
-                        "type": "string",
-                        "description": f"Destination collection; defaults to '{scope}'.",
-                    },
-                },
-                "required": ["key", "from_memory"],
-            }
-
-    async def _run(self, **kwargs: Any) -> ToolResult:
-        if self._scope is not None and "to_memory" not in kwargs:
-            kwargs["to_memory"] = self._scope
-        args = CollectionMoveArgs(**kwargs)
-        # Scope constrains the destination side of the move (the write).
-        # Source-side ``from_memory`` is unrestricted — moving an entry
-        # OUT of another collection into the bound scope is allowed,
-        # since the only entry that ends up written is in scope.
-        if self._scope is not None and args.to_memory != self._scope:
-            return ToolResult(
-                message=f"Refused: this collector can only write to '{self._scope}', "
-                f"not '{args.to_memory}'.",
-                success=False,
-            )
-        source = _resolve(self._db, args.from_memory)
-        outcome = source.move(args.key, args.to_memory, author=self._author)
-        if outcome == "not_found":
-            return ToolResult(
-                message=f"Key '{args.key}' not found in '{args.from_memory}' — nothing to move. "
-                f"List the current keys with collection_keys('{args.from_memory}') to find the "
-                f"right one."
-            )
-        if outcome == "collision":
-            return ToolResult(
-                message=f"Cannot move: '{args.to_memory}' already has a '{args.key}' entry. "
-                f"Delete the destination entry first with collection_delete_entry, or use "
-                f"collection_merge to combine the two collections."
-            )
-        return ToolResult(
-            message=f"Moved '{args.key}' from '{args.from_memory}' to '{args.to_memory}'.",
-            mutated=True,
-        )
-
-
 class CollectionMergeTool(MemoryTool):
     """Merge all entries from one collection into another, then archive the source."""
 
@@ -1609,7 +1536,6 @@ def build_memory_tools(
         CollectionWriteTool(db, llm_client, agent_name, scope=scope),
         UpdateEntryTool(db, agent_name, scope=scope),
         CollectionDeleteEntryTool(db, scope=scope),
-        CollectionMoveTool(db, agent_name, scope=scope),
         LogAppendTool(db, llm_client, agent_name),
     ]
     return reads + lifecycle + mutations

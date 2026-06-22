@@ -66,9 +66,8 @@ async def test_basic_message_flow(
         )
         # Memory seed: exercise every rendering path in one verbatim assertion.
         # Test-only names avoid colliding with system memories created by
-        # migrations 0026 and 0027 (user-messages, penny-messages,
-        # browse-results, likes, dislikes, knowledge, notified-thoughts,
-        # unnotified-thoughts).
+        # migrations 0026/0027/0068 (user-messages, penny-messages,
+        # browse-results, likes, dislikes, knowledge, thoughts).
         # Active memories rendered in alphabetical order: "playlists" < "tips".
         penny.db.memories.create_collection(
             "playlists", "favorite playlists", Inclusion.ALWAYS, RecallMode.ALL
@@ -162,7 +161,6 @@ target + success marker + done() summary
 - dislikes (collection, 0 entries) — Topics the user has expressed negative sentiment about
 - knowledge (collection, 0 entries) — Summarized facts from web pages Penny has read
 - likes (collection, 0 entries) — Topics the user has expressed positive sentiment about
-- notified-thoughts (collection, 0 entries) — Thoughts already shared with the user
 - notifier (collection, 0 entries) — Delivers new finds from published collections to the user.
 - penny-messages (log, 0 entries) — Every outgoing Penny reply
 - playlists (collection, 1 entries) — favorite playlists
@@ -170,8 +168,8 @@ target + success marker + done() summary
 corrects collection prompts that have drifted from their stated intent
 - secrets (collection, 1 entries) — hidden
 - skills (collection, 8 entries) — Workflow patterns — how to compose tools to satisfy user intents
+- thoughts (collection, 0 entries) — Penny's inner-monologue thoughts about the user's interests.
 - tips (log, 1 entries) — useful tips
-- unnotified-thoughts (collection, 0 entries) — Pending thoughts to share with the user
 - user-messages (log, 0 entries) — Every incoming user message
 
 ### playlists
@@ -1136,7 +1134,6 @@ async def test_chat_tool_surface_excludes_entry_mutations(
         # Entry mutations — now available to chat (user-directed edits).
         assert "collection_write" in names
         assert "update_entry" in names
-        assert "collection_move" in names
         assert "collection_delete_entry" in names
         assert "log_append" in names
 

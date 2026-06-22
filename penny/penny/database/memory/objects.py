@@ -705,11 +705,6 @@ def render_tool_call(name: str, args: object) -> str:
         return f"send({fields.get('content', '')!r})"
     if name == "browse":
         return f"browse({fields.get('queries', list(fields.values()))!r})"
-    if name == "collection_move":
-        return (
-            f"move({fields.get('key', '?')!r}: "
-            f"{fields.get('from_memory', '?')}→{fields.get('to_memory', '?')})"
-        )
     rendered = ", ".join(f"{key}={value!r}" for key, value in fields.items())
     return f"{name}({rendered or repr(args)})"
 

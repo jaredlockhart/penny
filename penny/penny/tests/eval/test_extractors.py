@@ -2,16 +2,19 @@
 the bulk of production runs, driven against the REAL model via ``run_for`` on
 their CANONICAL migration-seeded extraction prompts.
 
-These collections (``likes``, ``dislikes``, ``knowledge``, ``unnotified-thoughts``,
-``notified-thoughts``) already exist with their prompts in a fresh eval DB
-(migrations 0027/0031/0033), so each case only seeds the collector's INPUT — the
-``user-messages`` / ``browse-results`` logs, or prior thought entries — and
-checks the entry-level outcome on the bound collection (diffing before/after).
+These collections (``likes``, ``dislikes``, ``knowledge``, ``thoughts``) already
+exist with their prompts in a fresh eval DB (migrations 0027/0031/0033/0068), so
+each case only seeds the collector's INPUT — the ``user-messages`` /
+``browse-results`` logs, or prior entries — and checks the entry-level outcome on
+the bound collection (diffing before/after).
 
 Every collector is one of two shapes, both covered here:
 
-  read memory/log → write          likes / dislikes / knowledge / notify
-  browse → extract → write/notify   research-watcher / inner-monologue
+  read memory/log → write          likes / dislikes / knowledge
+  browse → extract → write          thoughts (inner-monologue) / research-watcher
+
+Delivery is the ``notifier`` consumer's job, covered by
+``notifier-delivers-published`` — producers here only gather.
 
 Browse-driven cases inject query-aware canned pages (``browse=``) so the
 *subsequent* call (the write, the send) is what gets scored.  Sends are read off
@@ -71,13 +74,6 @@ def _seed_browse_results(content: str):
         db.memory(PennyConstants.MEMORY_BROWSE_RESULTS_LOG).append(
             [LogEntryInput(content=content)], author="chat"
         )
-
-    return _apply
-
-
-def _seed_unnotified(entries: list[EntryInput]):
-    def _apply(db: Database) -> None:
-        db.memory("unnotified-thoughts").write(entries, author="thinking")
 
     return _apply
 
@@ -179,17 +175,6 @@ def _score_knowledge(db: Database, before: object, sent: list[str]) -> list[str]
     return fails
 
 
-def _score_notify(db: Database, before: object, sent: list[str]) -> list[str]:
-    before_entries = cast("dict[str, str]", before)
-    after = collection_entries(db, "notified-thoughts")
-    fails = []
-    if not sent:
-        fails.append("did not send a thought to the user")
-    if not (set(after) - set(before_entries)):
-        fails.append("did not move the shared thought into notified-thoughts")
-    return fails
-
-
 def _score_research(db: Database, before: object, sent: list[str]) -> list[str]:
     before_entries = cast("dict[str, str]", before)
     after = collection_entries(db, RESEARCH_WATCHER.name)
@@ -271,24 +256,6 @@ async def test_extract_knowledge(collector_eval) -> None:
     )
 
 
-async def test_notify_send_and_move(collector_eval) -> None:
-    await collector_eval(
-        case_id="notify-send-and-move",
-        collection="notified-thoughts",
-        seed=_seed_unnotified(
-            [
-                EntryInput(
-                    key="tidewatch co-op board game",
-                    content="Found a neat new co-op board game: Tidewatch — modular ocean "
-                    "board, 60-minute play time. https://bgnews.example.com/tidewatch 🌊",
-                )
-            ]
-        ),
-        snapshot=_snapshot("notified-thoughts"),
-        score=_score_notify,
-    )
-
-
 # ── Cases: browse → extract → write/notify ───────────────────────────────────
 
 
@@ -354,10 +321,10 @@ async def test_collector_recovers_from_text_bail(nudge_eval) -> None:
 async def test_thinking_generate(collector_eval) -> None:
     await collector_eval(
         case_id="thinking-generate",
-        collection="unnotified-thoughts",
+        collection="thoughts",
         seed=_seed_like,
-        snapshot=_snapshot("unnotified-thoughts"),
+        snapshot=_snapshot("thoughts"),
         browse=list(THINKING_PAGES),
-        score=_score_wrote_entry("unnotified-thoughts"),
+        score=_score_wrote_entry("thoughts"),
         min_pass_rate=None,  # report-only: read-like → browse → draft → dedup → write is long
     )

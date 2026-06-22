@@ -219,8 +219,8 @@ class Penny:
         self.schedule_executor.set_channel(self.channel)
         self.chat_agent.set_channel(self.channel)
         self.send_queue_drainer.set_channel(self.channel)
-        # Collector needs the channel so notify-style cycles (the collector
-        # bound to ``notified-thoughts``) can call send_message.
+        # Collector needs the channel so consumer cycles (e.g. the ``notifier``,
+        # which drains published collections) can call send_message.
         self.collector.set_channel(self.channel)
         self._wire_browser_tools(config)
 

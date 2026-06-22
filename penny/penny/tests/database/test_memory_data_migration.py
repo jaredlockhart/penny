@@ -218,13 +218,22 @@ def test_thoughts_split_by_notified_status(tmp_path):
     migrate(db.db_path)
 
     with sqlite3.connect(db.db_path) as conn:
+        thoughts = _entries(conn, "thoughts")
         unnotified = _entries(conn, "unnotified-thoughts")
         notified = _entries(conn, "notified-thoughts")
 
-    assert unnotified == [
-        ("Quantum Gravity", "pending insight", "thinking", title_vec, content_vec),
-    ]
-    assert notified == [("Black Holes", "shared insight", "thinking", None, None)]
+    # 0027 backfills the old `thought` table into the unnotified/notified
+    # collections; 0068 then unifies both into one published `thoughts` collection
+    # (the move-drain pair retired), so every migrated thought lands there and the
+    # old shells are left empty.
+    assert sorted(thoughts) == sorted(
+        [
+            ("Quantum Gravity", "pending insight", "thinking", title_vec, content_vec),
+            ("Black Holes", "shared insight", "thinking", None, None),
+        ]
+    )
+    assert unnotified == []
+    assert notified == []
 
 
 def test_knowledge_collection_populated_with_url_in_content(tmp_path):

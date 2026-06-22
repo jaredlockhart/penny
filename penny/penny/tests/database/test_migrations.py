@@ -80,7 +80,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 67
+        assert count == 68
 
         conn = sqlite3.connect(db_path)
         tables = {
@@ -120,7 +120,7 @@ class TestMigrate:
 
         count1 = migrate(db_path)
         count2 = migrate(db_path)
-        assert count1 == 67
+        assert count1 == 68
         assert count2 == 0
 
     def test_tracks_in_migrations_table(self, tmp_path):
@@ -158,8 +158,8 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        # 0001 is skipped; 0002 through 0067 run = 66 migrations
-        assert count == 66
+        # 0001 is skipped; 0002 through 0068 run = 67 migrations
+        assert count == 67
 
     def test_bootstrap_with_tables_already_present(self, tmp_path):
         """If tables already exist (from SQLModel.create_tables), migration should succeed."""
@@ -185,7 +185,7 @@ class TestMigrate:
         conn.close()
 
         count = migrate(db_path)
-        assert count == 67  # all migrations applied
+        assert count == 68  # all migrations applied
 
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM _migrations")
@@ -578,3 +578,35 @@ class TestMigrate:
         assert published == 0  # a consumer, not a source
         assert "read_published_latest" in prompt  # identified as a consumer by this call
         assert "send_message" in prompt
+
+    def test_0068_unifies_thoughts_onto_pubsub(self, tmp_path):
+        """Migration 0068 collapses unnotified-/notified-thoughts into one published
+        `thoughts` producer (no send_message in its body), moves their entries in,
+        seeds the notifier cursor to the head, and archives the old collections."""
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE _bootstrap (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        migrate(db_path)
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT inclusion, published, extraction_prompt FROM memory WHERE name = 'thoughts'"
+        ).fetchone()
+        archived = dict(
+            conn.execute(
+                "SELECT name, archived FROM memory "
+                "WHERE name IN ('unnotified-thoughts', 'notified-thoughts')"
+            ).fetchall()
+        )
+        conn.close()
+        assert row is not None
+        inclusion, published, prompt = row
+        assert inclusion == "relevant"  # past thoughts still surface in chat
+        assert published == 1  # the notifier drains it
+        assert 'collection_write("thoughts"' in prompt  # producer writes to itself
+        assert "send_message" not in prompt  # producer gathers only; notifier delivers
+        # The old move-drain pair is retired (archived), not dispatched.
+        assert archived == {"unnotified-thoughts": 1, "notified-thoughts": 1}
