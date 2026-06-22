@@ -26,7 +26,6 @@ from penny.tools.memory_tools import (
     CollectionGetTool,
     CollectionKeysTool,
     CollectionMergeTool,
-    CollectionMoveTool,
     CollectionReadLatestTool,
     CollectionReadRandomTool,
     CollectionUnarchiveTool,
@@ -514,64 +513,6 @@ class TestCollectionMutations:
             memory="likes", key="k", content="new"
         )
         assert "not found" in result.message
-
-    @pytest.mark.asyncio
-    async def test_move_between_collections(self, tmp_path, mock_llm):
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db, None).execute(
-            name="unnotified",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionCreateTool(db, None).execute(
-            name="notified",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="test").execute(
-            memory="unnotified", entries=[{"key": "t1", "content": "x"}]
-        )
-        result = await CollectionMoveTool(db, author="test").execute(
-            key="t1", from_memory="unnotified", to_memory="notified"
-        )
-        assert "Moved 't1'" in result.message
-
-    @pytest.mark.asyncio
-    async def test_move_collision(self, tmp_path, mock_llm):
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db, None).execute(
-            name="a",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionCreateTool(db, None).execute(
-            name="b",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        write = CollectionWriteTool(db, _make_llm_client(mock_llm), author="test")
-        await write.execute(memory="a", entries=[{"key": "k", "content": "src"}])
-        await write.execute(memory="b", entries=[{"key": "k", "content": "dst"}])
-        result = await CollectionMoveTool(db, author="test").execute(
-            key="k", from_memory="a", to_memory="b"
-        )
-        assert "already has a 'k' entry" in result.message
 
     @pytest.mark.asyncio
     async def test_archive_and_unarchive(self, tmp_path):
@@ -1202,7 +1143,6 @@ class TestFactory:
         "collection_write",
         "update_entry",
         "collection_delete_entry",
-        "collection_move",
         "log_append",
     }
 
@@ -1293,83 +1233,6 @@ class TestScopedFactory:
         update = UpdateEntryTool(db, author="collector:likes", scope="likes")
         result = await update.execute(memory="dislikes", key="k", content="v")
         assert "Refused" in result.message
-
-    @pytest.mark.asyncio
-    async def test_scoped_move_allows_into_target(self, tmp_path, mock_llm):
-        """Move's destination is the entry write — if to_memory == scope,
-        the move is in-bounds even though from_memory is a different memory.
-        """
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db, None).execute(
-            name="src",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionCreateTool(db, None).execute(
-            name="dst",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
-            memory="src", entries=[{"key": "k", "content": "v"}]
-        )
-
-        move = CollectionMoveTool(db, author="collector:dst", scope="dst")
-        result = await move.execute(key="k", from_memory="src", to_memory="dst")
-        assert "Moved 'k'" in result.message
-        assert db.memory("dst").get("k")[0].content == "v"
-
-    @pytest.mark.asyncio
-    async def test_scoped_move_defaults_to_memory_from_scope(self, tmp_path, mock_llm):
-        """Omitting to_memory on a scoped tool defaults to the bound scope."""
-        db = _make_db(tmp_path)
-        await CollectionCreateTool(db, None).execute(
-            name="src",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionCreateTool(db, None).execute(
-            name="dst",
-            description="x",
-            inclusion="never",
-            recall="recent",
-            extraction_prompt="test fixture extraction prompt",
-            collector_interval_seconds=3600,
-            intent="a running list the user asked me to keep",
-        )
-        await CollectionWriteTool(db, _make_llm_client(mock_llm), author="t").execute(
-            memory="src", entries=[{"key": "k", "content": "v"}]
-        )
-
-        move = CollectionMoveTool(db, author="collector:dst", scope="dst")
-        result = await move.execute(key="k", from_memory="src")
-        assert "Moved 'k'" in result.message
-        assert db.memory("dst").get("k")[0].content == "v"
-
-    @pytest.mark.asyncio
-    async def test_scoped_move_to_memory_not_required_in_schema(self, tmp_path):
-        """Scoped instance exposes to_memory as optional in its parameters schema."""
-        move = CollectionMoveTool(_make_db(tmp_path), author="collector:dst", scope="dst")
-        assert "to_memory" not in move.parameters["required"]
-
-    @pytest.mark.asyncio
-    async def test_scoped_move_rejects_outbound(self, tmp_path):
-        db = _make_db(tmp_path)
-        move = CollectionMoveTool(db, author="collector:src", scope="src")
-        result = await move.execute(key="k", from_memory="src", to_memory="dst")
-        assert "Refused" in result.message and "src" in result.message and "dst" in result.message
 
     @pytest.mark.asyncio
     async def test_scoped_delete_rejects_other_collection(self, tmp_path):

@@ -68,9 +68,8 @@ class SendMessageTool(Tool):
         "required": ["content"],
     }
 
-    # Preserved verbatim: collector prompts gate a follow-up ``collection_move``
-    # on this exact string ("only move the entry once send_message returned
-    # Message sent.").  Enqueue is the successful handoff, so it returns this.
+    # The success signal a consumer's prompt can key on. Enqueue is the
+    # successful handoff (delivery is the drainer's job), so it returns this.
     _SENT_RESPONSE = "Message sent."
     _REFUSAL_RESPONSE = (
         "Message NOT sent: the content reads as a model refusal "

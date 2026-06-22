@@ -252,11 +252,6 @@ class PennyConstants:
         }
     )
 
-    # System collections (created by migration 0027) that agents read and
-    # write through the memory tool surface.
-    MEMORY_UNNOTIFIED_THOUGHTS = "unnotified-thoughts"
-    MEMORY_NOTIFIED_THOUGHTS = "notified-thoughts"
-
     # The self-correcting collector (seeded by migration 0055): reviews Penny's
     # own runs/messages against each collection's intent and rewrites drifted
     # extraction_prompts directly.
