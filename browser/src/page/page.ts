@@ -692,14 +692,15 @@ function normalizeSnippet(content: string | null | undefined): string {
 }
 
 function extractPromptType(run: PromptLogRun): string {
-  // For collector cycles, every run has prompt_type="collector" — surface
-  // the bound collection name instead, which is the only thing that
-  // distinguishes one collector run from another.
-  if (run.agent_name === "collector" && run.run_target) {
-    return run.run_target;
-  }
+  // Collector runs surface their bound collection via run.run_target (stamped
+  // at write time, preferred by the caller above) — never reach here with one.
+  // The prompt_type fallback below deliberately skips a type that just repeats
+  // the agent identity (a collector run's prompt_type IS "collector"): the bold
+  // agent label already shows it, so emitting it again as the run-type chip was
+  // the bare "collector" with no collection — surface nothing rather than that.
   for (const prompt of run.prompts) {
     if (!prompt.prompt_type) continue;
+    if (prompt.prompt_type === run.agent_name) continue;
     if (prompt.prompt_type === "user_message") {
       const userText = extractLastUserMessage(prompt);
       if (userText) return userText;

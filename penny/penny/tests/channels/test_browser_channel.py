@@ -1335,16 +1335,27 @@ class TestBrowserPromptLogHandlers:
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_run_outcome(self, tmp_path):
-        """Run outcome (outcome / reason / target) is included in the response when set."""
+        """Run outcome (outcome / reason / target) is included in the response when set.
+
+        run_target is read straight off the prompt rows (every prompt carries it
+        at write time), independent of the outcome — so an outcome-less run
+        (single prompt, in-progress, or never tagged) still reports its bound
+        collection rather than dropping it and rendering the bare agent identity.
+        """
         channel, db = self._channel(tmp_path)
         self._log_prompt(db, "collector", "run1", run_target="board-games")
         db.messages.set_run_outcome("run1", "worked", "wrote 2 new games")
+        # A second run that never got an outcome tagged (e.g. still running).
+        self._log_prompt(db, "collector", "run2", run_target="knowledge")
 
         response = await self._request_prompt_logs(channel)
-        run = response["runs"][0]
-        assert run["run_outcome"] == "worked"
-        assert run["run_reason"] == "wrote 2 new games"
-        assert run["run_target"] == "board-games"
+        runs = {run["run_id"]: run for run in response["runs"]}
+        assert runs["run1"]["run_outcome"] == "worked"
+        assert runs["run1"]["run_reason"] == "wrote 2 new games"
+        assert runs["run1"]["run_target"] == "board-games"
+        # Outcome-less run keeps its collection name (the bug: it was dropped).
+        assert runs["run2"]["run_outcome"] is None
+        assert runs["run2"]["run_target"] == "knowledge"
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_token_counts(self, tmp_path):

@@ -720,13 +720,19 @@ class MessageStore:
         # Run outcome is set on the last prompt that has one
         run_outcome: str | None = None
         run_reason: str | None = None
-        run_target: str | None = None
         for p in reversed(prompts):
             if p.run_outcome is not None or p.run_reason:
                 run_outcome = p.run_outcome
                 run_reason = p.run_reason
-                run_target = p.run_target
                 break
+
+        # The bound collection is stamped on every prompt at write time (all
+        # prompts in a run share it), so read it straight off the first prompt
+        # that carries one — independent of the outcome, which an in-progress or
+        # never-tagged run may lack.  Tying it to the outcome dropped run_target
+        # for outcome-less runs, and the addon then rendered the bare agent
+        # identity ("collector") instead of the collection name.
+        run_target: str | None = next((p.run_target for p in prompts if p.run_target), None)
 
         return {
             "run_id": run_id,
