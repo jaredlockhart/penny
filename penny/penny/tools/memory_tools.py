@@ -36,8 +36,6 @@ from penny.database.memory import (
     MemoryType,
     RecallMode,
     WriteResult,
-    degenerate_reason,
-    is_blank,
 )
 from penny.database.models import MemoryEntry, MemoryRow
 from penny.llm.similarity import embed_text
@@ -74,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 _INCLUSION_MODES = ", ".join(m.value for m in Inclusion)
 _RECALL_MODES = ", ".join(m.value for m in RecallMode)
-EXTRACTION_PROMPT_MIN_CHARS = 25
 
 
 # ── Shared formatting ───────────────────────────────────────────────────────
@@ -149,29 +146,6 @@ class MemoryTool(Tool):
     async def _run(self, **kwargs: Any) -> ToolResult:
         """Resolve/create a memory and operate on it; let any memory exception
         propagate to :meth:`execute`."""
-
-
-def check_extraction_prompt(prompt: str | None) -> str | None:
-    """Return an error string if prompt is set but too short, else None."""
-    if prompt is None or len(prompt) >= EXTRACTION_PROMPT_MIN_CHARS:
-        return None
-    return (
-        f"extraction_prompt is too short ({len(prompt)} chars — minimum "
-        f"{EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
-        f"(see the collection_create description for the required shape)."
-    )
-
-
-def check_description(description: str) -> str | None:
-    """Return an error string if a required description is blank, else None.
-
-    The description doubles as the stage-1 routing anchor, so a blank one
-    would create a memory that can never be matched.  Reject it loudly rather
-    than embedding an empty string.
-    """
-    if is_blank(description):
-        return "description cannot be blank — provide a content-reflective one-line summary."
-    return None
 
 
 def _humanize_interval(seconds: int | None) -> str:
@@ -375,10 +349,6 @@ class CollectionCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = CollectionCreateArgs(**kwargs)
-        if error := check_description(args.description):
-            return ToolResult(message=error, success=False)
-        if error := check_extraction_prompt(args.extraction_prompt):
-            return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
         memory = self._db.memories.create_collection(
             args.name,
@@ -436,8 +406,6 @@ class LogCreateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = LogCreateArgs(**kwargs)
-        if error := check_description(args.description):
-            return ToolResult(message=error, success=False)
         description_embedding = await embed_text(self._llm_client, args.description)
         self._db.memories.create_log(
             args.name,
@@ -814,13 +782,6 @@ class UpdateEntryTool(MemoryTool):
                 f"not '{args.memory}'.",
                 success=False,
             )
-        if reason := degenerate_reason(args.content):
-            return ToolResult(
-                message=f"Refused: replacement content rejected — {reason}. "
-                f"Provide the full replacement text, or use collection_delete_entry "
-                f"if you meant to remove '{args.key}'.",
-                success=False,
-            )
         outcome = _resolve(self._db, args.memory).update(args.key, args.content, self._author)
         if outcome == "not_found":
             return ToolResult(
@@ -941,8 +902,6 @@ class CollectionUpdateTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = CollectionUpdateArgs(**kwargs)
-        if error := check_extraction_prompt(args.extraction_prompt):
-            return ToolResult(message=error, success=False)
         inclusion = Inclusion(args.inclusion) if args.inclusion is not None else None
         recall = RecallMode(args.recall) if args.recall is not None else None
         # Re-embed the routing anchor whenever the description changes.
@@ -1403,18 +1362,6 @@ class LogAppendTool(MemoryTool):
 
     async def _run(self, **kwargs: Any) -> ToolResult:
         args = LogAppendArgs(**kwargs)
-        if args.memory in PennyConstants.SYSTEM_LOGS:
-            return ToolResult(
-                message=f"Refused: '{args.memory}' is a system log written automatically "
-                "every turn (conversation and run history) — you can't append to "
-                "it. Use a collection or a log you created for your own notes.",
-                success=False,
-            )
-        if is_blank(args.content):
-            return ToolResult(
-                message="Refused: log entry content is blank — provide non-empty text.",
-                success=False,
-            )
         vec = await embed_text(self._llm, args.content)
         _resolve(self._db, args.memory).append(
             [LogEntryInput(content=args.content, content_embedding=vec)],

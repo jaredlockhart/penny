@@ -186,8 +186,11 @@ class TestCreateAndList:
 
     @pytest.mark.asyncio
     async def test_create_rejects_short_extraction_prompt(self, tmp_path):
+        # The length rule now lives on CollectionCreateArgs (the args_model), so
+        # the rejection is produced by the pre-execute Tool.run gate — an
+        # actionable validation envelope naming the field and the fix.
         db = _make_db(tmp_path)
-        result = await CollectionCreateTool(db, None).execute(
+        result = await CollectionCreateTool(db, None).run(
             name="notes",
             description="x",
             inclusion="never",
@@ -196,6 +199,8 @@ class TestCreateAndList:
             collector_interval_seconds=3600,
             intent="a running list the user asked me to keep",
         )
+        assert result.success is False
+        assert "extraction_prompt" in result.message
         assert "too short" in result.message
         assert "minimum" in result.message
         assert db.memories.get("notes") is None  # collection not created
@@ -203,9 +208,11 @@ class TestCreateAndList:
     @pytest.mark.asyncio
     async def test_create_rejects_blank_description(self, tmp_path):
         # The description doubles as the stage-1 routing anchor — a blank one
-        # would embed an empty string and never match, so it's refused.
+        # would embed an empty string and never match, so it's refused.  The
+        # blank-check lives on the args_model, so the refusal comes from the
+        # pre-execute Tool.run gate.
         db = _make_db(tmp_path)
-        result = await CollectionCreateTool(db, None).execute(
+        result = await CollectionCreateTool(db, None).run(
             name="notes",
             description="   ",
             inclusion="never",
@@ -214,8 +221,46 @@ class TestCreateAndList:
             collector_interval_seconds=3600,
             intent="a running list the user asked me to keep",
         )
+        assert result.success is False
         assert "description cannot be blank" in result.message
         assert db.memories.get("notes") is None  # collection not created
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_invalid_inclusion_with_valid_modes(self, tmp_path):
+        # An out-of-enum inclusion is rejected at the args_model with an
+        # actionable message that lists the valid modes (not a bare ValueError
+        # bubbling from the store-layer Inclusion(...) cast).
+        db = _make_db(tmp_path)
+        result = await CollectionCreateTool(db, None).run(
+            name="notes",
+            description="real description",
+            inclusion="sometimes",
+            recall="recent",
+            extraction_prompt="test fixture extraction prompt that is long enough",
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+        assert result.success is False
+        assert "inclusion must be one of" in result.message
+        assert "always" in result.message and "relevant" in result.message
+        assert db.memories.get("notes") is None
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_invalid_recall_with_valid_modes(self, tmp_path):
+        db = _make_db(tmp_path)
+        result = await CollectionCreateTool(db, None).run(
+            name="notes",
+            description="real description",
+            inclusion="never",
+            recall="sometimes",
+            extraction_prompt="test fixture extraction prompt that is long enough",
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+        assert result.success is False
+        assert "recall must be one of" in result.message
+        assert "recent" in result.message and "all" in result.message
+        assert db.memories.get("notes") is None
 
     @pytest.mark.asyncio
     async def test_create_rejects_missing_extraction_prompt(self, tmp_path):
@@ -275,7 +320,11 @@ class TestCreateAndList:
             collector_interval_seconds=3600,
             intent="a running list the user asked me to keep",
         )
-        result = await CollectionUpdateTool(db, None).execute(name="notes", extraction_prompt="yes")
+        # The optional extraction_prompt rule on CollectionUpdateArgs validates
+        # only when present, via the pre-execute Tool.run gate.
+        result = await CollectionUpdateTool(db, None).run(name="notes", extraction_prompt="yes")
+        assert result.success is False
+        assert "extraction_prompt" in result.message
         assert "too short" in result.message
         # Update rejected — original prompt preserved unchanged
         assert db.memories.get("notes").extraction_prompt == original_prompt
@@ -489,9 +538,9 @@ class TestCollectionMutations:
         assert "new" in fetched.message
         # A blank replacement is refused (same content bar as collection_write),
         # leaving the existing content untouched rather than blanking the entry.
-        blank = await UpdateEntryTool(db, author="test").execute(
-            memory="likes", key="k", content="   "
-        )
+        # The degenerate-content rule now lives on UpdateEntryArgs.content, so the
+        # refusal is produced by the pre-execute Tool.run gate.
+        blank = await UpdateEntryTool(db, author="test").run(memory="likes", key="k", content="   ")
         assert blank.success is False
         assert "no word tokens" in blank.message  # what went wrong
         assert "collection_delete_entry" in blank.message  # how to correct it
@@ -564,8 +613,9 @@ class TestLogTools:
         rendered = await LogReadTool(db, "chat", scope=None).execute(memory="events")
         assert "hello" in rendered.message
         # A blank append is refused (blank-only — a bare URL is still a valid log
-        # entry), so nothing degenerate joins the stream.
-        blank = await append.execute(memory="events", content="   ")
+        # entry), so nothing degenerate joins the stream.  The non-blank rule lives
+        # on LogAppendArgs.content, so the refusal comes from the Tool.run gate.
+        blank = await append.run(memory="events", content="   ")
         assert blank.success is False
         assert "blank" in blank.message
 
@@ -626,10 +676,13 @@ class TestLogTools:
         reconstruction and the run audit trail from model-authored entries."""
         db = _make_db(tmp_path)
         append = LogAppendTool(db, _make_llm_client(mock_llm), author="test")
+        # The reserved-target check is a pure constant lookup, so it lives on
+        # LogAppendArgs.memory and the refusal comes from the Tool.run gate.
         for system_log in PennyConstants.SYSTEM_LOGS:
-            result = await append.execute(memory=system_log, content="forged turn")
-            assert "Refused" in result.message
+            result = await append.run(memory=system_log, content="forged turn")
+            assert result.success is False
             assert system_log in result.message
+            assert "system log" in result.message  # what went wrong + how to fix
         # Nothing was created/written — the refusal short-circuits before the store.
         assert db.memories.get(PennyConstants.MEMORY_PENNY_MESSAGES_LOG) is None
 

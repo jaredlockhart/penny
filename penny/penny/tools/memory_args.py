@@ -11,7 +11,16 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, Field, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, Field, model_validator
+
+from penny.constants import PennyConstants
+from penny.database.memory import Inclusion, RecallMode
+from penny.text_validity import (
+    require_extraction_prompt,
+    require_non_blank_description,
+    require_non_blank_log_content,
+    require_non_degenerate_content,
+)
 
 # Models occasionally substitute Unicode dashes (U+2010–U+2015) for ASCII
 # hyphen-minus (U+002D) when emitting memory names — gpt-oss has been
@@ -64,6 +73,83 @@ def _blank_to_none(value: object) -> object:
 # rather than written through, so it can never clobber the existing value.
 OptionalText = Annotated[str | None, BeforeValidator(_blank_to_none)]
 
+
+# ── Annotated validator types ─────────────────────────────────────────────────
+# One Annotated type per validation concern, wrapping a shared predicate, so a
+# field declares its rule by *type* — no per-field @field_validator methods.  The
+# required variants raise on a bad value; the optional variants coerce a blank to
+# ``None`` first (so "" means "leave unchanged") and skip the rule when omitted.
+
+
+def _require_inclusion(value: str) -> str:
+    """Raise unless ``value`` is a valid ``Inclusion`` mode, naming the choices."""
+    if value not in {mode.value for mode in Inclusion}:
+        valid = ", ".join(mode.value for mode in Inclusion)
+        raise ValueError(f"inclusion must be one of: {valid}.")
+    return value
+
+
+def _require_recall(value: str) -> str:
+    """Raise unless ``value`` is a valid ``RecallMode``, naming the choices."""
+    if value not in {mode.value for mode in RecallMode}:
+        valid = ", ".join(mode.value for mode in RecallMode)
+        raise ValueError(f"recall must be one of: {valid}.")
+    return value
+
+
+def _skip_none(validator: Any) -> Any:
+    """Wrap an AfterValidator predicate so it runs only when the value is set —
+    an optional field coerced to ``None`` (omitted) skips the rule."""
+
+    def _validate(value: Any) -> Any:
+        return value if value is None else validator(value)
+
+    return _validate
+
+
+def _reject_system_log(value: str) -> str:
+    """Raise if ``value`` names a framework-managed system log.
+
+    The four ``SYSTEM_LOGS`` (conversation + run history) are written only by
+    Python side-effects; an agent appending to one would forge a turn or audit
+    row.  A pure constant lookup, so it's an arg-validation refusal — not a
+    runtime decision.
+    """
+    if value in PennyConstants.SYSTEM_LOGS:
+        raise ValueError(
+            f"'{value}' is a system log written automatically every turn "
+            "(conversation and run history) — you can't append to it. Use a "
+            "collection or a log you created for your own notes."
+        )
+    return value
+
+
+# A log name an agent may append to: dashes normalised, system logs refused.
+AppendableLogName = Annotated[
+    str, BeforeValidator(_normalize_dashes), AfterValidator(_reject_system_log)
+]
+
+NonBlankDescription = Annotated[str, AfterValidator(require_non_blank_description)]
+ExtractionPrompt = Annotated[str, AfterValidator(require_extraction_prompt)]
+InclusionValue = Annotated[str, AfterValidator(_require_inclusion)]
+RecallValue = Annotated[str, AfterValidator(_require_recall)]
+CollectionContent = Annotated[str, AfterValidator(require_non_degenerate_content)]
+NonBlankLogContent = Annotated[str, AfterValidator(require_non_blank_log_content)]
+
+# Optional-on-update variants: blank → None (omitted), rule applied only when set.
+OptionalExtractionPrompt = Annotated[
+    str | None,
+    BeforeValidator(_blank_to_none),
+    AfterValidator(_skip_none(require_extraction_prompt)),
+]
+OptionalInclusion = Annotated[
+    str | None, BeforeValidator(_blank_to_none), AfterValidator(_skip_none(_require_inclusion))
+]
+OptionalRecall = Annotated[
+    str | None, BeforeValidator(_blank_to_none), AfterValidator(_skip_none(_require_recall))
+]
+
+
 # ── Metadata ────────────────────────────────────────────────────────────────
 
 
@@ -84,10 +170,10 @@ class CollectionCreateArgs(BaseModel):
     """
 
     name: MemoryName
-    description: str
-    inclusion: str  # "always" | "relevant" | "never" — validated in the store layer
-    recall: str  # "all" | "relevant" | "recent" — validated in the store layer
-    extraction_prompt: str
+    description: NonBlankDescription
+    inclusion: InclusionValue  # "always" | "relevant" | "never"
+    recall: RecallValue  # "all" | "relevant" | "recent"
+    extraction_prompt: ExtractionPrompt
     collector_interval_seconds: int
     intent: str
     # true when the user wants to be told about new entries (notify-on-new).
@@ -106,9 +192,9 @@ class LogCreateArgs(BaseModel):
     """
 
     name: MemoryName
-    description: str
-    inclusion: str  # "always" | "relevant" | "never" — validated in the store layer
-    recall: str  # "all" | "relevant" | "recent" — validated in the store layer
+    description: NonBlankDescription
+    inclusion: InclusionValue  # "always" | "relevant" | "never"
+    recall: RecallValue  # "all" | "relevant" | "recent"
 
 
 class MemoryNameArgs(BaseModel):
@@ -133,9 +219,9 @@ class CollectionUpdateArgs(BaseModel):
 
     name: MemoryName
     description: OptionalText = None
-    inclusion: OptionalText = None  # "always" | "relevant" | "never"
-    recall: OptionalText = None  # "all" | "relevant" | "recent"
-    extraction_prompt: OptionalText = None
+    inclusion: OptionalInclusion = None  # "always" | "relevant" | "never"
+    recall: OptionalRecall = None  # "all" | "relevant" | "recent"
+    extraction_prompt: OptionalExtractionPrompt = None
     collector_interval_seconds: int | None = None
     published: bool | None = None  # flip notify-on-new on/off; None = leave unchanged
 
@@ -242,7 +328,7 @@ class UpdateEntryArgs(BaseModel):
 
     memory: MemoryName
     key: str
-    content: str
+    content: CollectionContent
 
 
 class CollectionMergeArgs(BaseModel):
@@ -265,8 +351,8 @@ class CollectionDeleteEntryArgs(BaseModel):
 class LogAppendArgs(BaseModel):
     """Append one keyless entry to a log."""
 
-    memory: MemoryName
-    content: str
+    memory: AppendableLogName
+    content: NonBlankLogContent
 
 
 # ── Introspection ───────────────────────────────────────────────────────────

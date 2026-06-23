@@ -1,10 +1,71 @@
 """Pydantic models for tool calling."""
 
-from typing import Any
+from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from typing import Annotated, Any
 
-from penny.text_validity import half_formed_send_reason
+from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+
+from penny.text_validity import half_formed_send_reason, is_blank
+
+
+def _require_non_blank(value: str) -> str:
+    """Reject a string that carries no word tokens (blank / punctuation only).
+
+    The pure-arg "this field can't be empty" rule, shared by every text field a
+    tool genuinely needs filled (an email subject, an email body).  ``is_blank``
+    (from ``text_validity``) is the same predicate the corpus write path uses, so
+    "what counts as empty" is one definition across the codebase.
+    """
+    if is_blank(value):
+        raise ValueError(
+            "must not be blank — provide non-empty text (a real subject/body), not "
+            "whitespace or punctuation"
+        )
+    return value
+
+
+# A required text field that must carry at least one word token.
+NonBlankText = Annotated[str, AfterValidator(_require_non_blank)]
+
+
+def _require_queries(value: list[str]) -> list[str]:
+    """Reject an empty browse ``queries`` list with an actionable message."""
+    if not value:
+        raise ValueError("provide at least one search query or URL")
+    return value
+
+
+# Browse queries: at least one search query or URL.
+QueryList = Annotated[list[str], AfterValidator(_require_queries)]
+
+
+def _require_email_ids(value: list[str]) -> list[str]:
+    """Reject an empty ``email_ids`` list, pointing at where IDs come from.
+
+    A bare ``Field(min_length=1)`` would surface Pydantic's generic "list should
+    have at least 1 item" — true but not actionable.  Name the source so the
+    model knows the fix is to read IDs from a prior listing call first."""
+    if not value:
+        raise ValueError(
+            "provide at least one email ID from a prior search_emails or list_emails result"
+        )
+    return value
+
+
+# Email IDs to read: at least one, sourced from a prior search/list call.
+EmailIdList = Annotated[list[str], AfterValidator(_require_email_ids)]
+
+
+def _require_recipients(value: list[str]) -> list[str]:
+    """Reject an empty recipient ``to`` list with an actionable message."""
+    if not value:
+        raise ValueError("provide at least one recipient email address")
+    return value
+
+
+# Draft recipients: at least one address.
+RecipientList = Annotated[list[str], AfterValidator(_require_recipients)]
 
 
 class NoArgs(BaseModel):
@@ -60,9 +121,14 @@ class BrowsePage(BaseModel):
 
 
 class BrowseArgs(BaseModel):
-    """Validated arguments for the browse tool."""
+    """Validated arguments for the browse tool.
 
-    queries: list[str] = Field(default_factory=list)
+    ``queries`` must carry at least one entry: an empty browse call did nothing
+    silently, so it's rejected at the arg gate with an actionable message rather
+    than reaching ``execute`` and no-op'ing.
+    """
+
+    queries: QueryList
     reasoning: str | None = None
 
 
@@ -94,7 +160,12 @@ class SendMessageArgs(BaseModel):
 
 
 class SearchEmailsArgs(BaseModel):
-    """Validated arguments for the search_emails tool."""
+    """Validated arguments for the search_emails tool.
+
+    Every field is optional, but an all-empty search is meaningless (it would
+    match the whole mailbox), so at least one criterion must be supplied — the
+    ``_require_a_criterion`` validator rejects the empty call at the arg gate.
+    """
 
     text: str | None = None
     from_addr: str | None = None
@@ -102,11 +173,24 @@ class SearchEmailsArgs(BaseModel):
     after: str | None = None
     before: str | None = None
 
+    @model_validator(mode="after")
+    def _require_a_criterion(self) -> SearchEmailsArgs:
+        if not any((self.text, self.from_addr, self.subject, self.after, self.before)):
+            raise ValueError(
+                "provide at least one search criterion — text, from_addr, subject, after, or before"
+            )
+        return self
+
 
 class ReadEmailsArgs(BaseModel):
-    """Validated arguments for the read_emails tool."""
+    """Validated arguments for the read_emails tool.
 
-    email_ids: list[str]
+    ``email_ids`` must be non-empty: reading no emails is a no-op, so the empty
+    list is rejected at the arg gate (the ``NO_EMAILS_TO_READ`` guidance) rather
+    than reaching ``execute``.
+    """
+
+    email_ids: EmailIdList
 
 
 class ListEmailsArgs(BaseModel):
@@ -116,11 +200,16 @@ class ListEmailsArgs(BaseModel):
 
 
 class DraftEmailArgs(BaseModel):
-    """Validated arguments for the draft_email tool."""
+    """Validated arguments for the draft_email tool.
 
-    to: list[str]
-    subject: str
-    body: str
+    Structural validation only — a recipient list with at least one address and a
+    non-blank subject and body.  Address *format* is not checked here; a malformed
+    address is a runtime send failure handled in ``execute``.
+    """
+
+    to: RecipientList
+    subject: NonBlankText
+    body: NonBlankText
     cc: list[str] | None = None
 
 

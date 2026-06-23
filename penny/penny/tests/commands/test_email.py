@@ -13,7 +13,9 @@ from penny.config import Config
 from penny.jmap.models import EmailAddress, EmailDetail, EmailSummary
 from penny.responses import PennyResponse
 from penny.tests.conftest import TEST_SENDER
-from penny.tools.read_emails import NO_EMAILS_TO_READ, ReadEmailsTool
+from penny.tools.draft_email import DraftEmailTool
+from penny.tools.read_emails import ReadEmailsTool
+from penny.tools.search_emails import SearchEmailsTool
 
 FAKE_TOKEN = "fmu1-test-token"
 
@@ -223,13 +225,79 @@ async def test_read_emails_tool_falls_back_on_empty_summary():
 
 @pytest.mark.asyncio
 async def test_read_emails_tool_no_ids():
-    """Test that ReadEmailsTool returns early for empty ID list."""
+    """An empty ``email_ids`` is rejected by the ``args_model`` at the ``run`` gate
+    — ``execute`` is never reached, so the client/LLM are never called, and the
+    actionable error names the field and the fix."""
     mock_jmap = AsyncMock()
     mock_llm = AsyncMock()
 
     tool = ReadEmailsTool(mock_jmap, mock_llm, "test query")
-    result = await tool.execute(email_ids=[])
+    result = await tool.run(email_ids=[])
 
-    assert result.message == NO_EMAILS_TO_READ
+    assert result.success is False
+    assert "email_ids" in result.message
     mock_jmap.read_emails.assert_not_called()
     mock_llm.chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_search_emails_tool_rejects_all_empty_search():
+    """An all-empty search (no criterion) is rejected by ``SearchEmailsArgs`` at the
+    ``run`` gate before ``execute`` runs — the client is never queried, and the
+    actionable error names the missing criteria."""
+    mock_client = AsyncMock()
+
+    tool = SearchEmailsTool(mock_client)
+    result = await tool.run()
+
+    assert result.success is False
+    assert "criterion" in result.message
+    mock_client.search_emails.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_search_emails_tool_runs_with_one_criterion(mock_jmap_client):
+    """A single criterion (text) is enough to pass validation and reach ``execute``."""
+    tool = SearchEmailsTool(mock_jmap_client)
+    result = await tool.run(text="package")
+
+    assert result.success is True
+    assert "email(s)" in result.message
+    mock_jmap_client.search_emails.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_draft_email_tool_rejects_structural_gaps():
+    """``DraftEmailArgs`` rejects an empty recipient list and blank subject/body at
+    the ``run`` gate — ``execute`` never runs, so the client is never called."""
+    mock_client = AsyncMock()
+    tool = DraftEmailTool(mock_client)
+
+    empty_to = await tool.run(to=[], subject="Hi", body="Hello there")
+    assert empty_to.success is False
+    assert "to" in empty_to.message
+
+    blank_subject = await tool.run(to=["a@b.com"], subject="   ", body="Hello there")
+    assert blank_subject.success is False
+    assert "subject" in blank_subject.message
+
+    blank_body = await tool.run(to=["a@b.com"], subject="Hi", body="")
+    assert blank_body.success is False
+    assert "body" in blank_body.message
+
+    mock_client.draft_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_draft_email_tool_saves_well_formed_draft():
+    """A draft with a recipient and non-blank subject/body passes validation and is
+    saved through the client."""
+    mock_client = AsyncMock()
+    mock_client.draft_response.return_value = "draft-123"
+    tool = DraftEmailTool(mock_client)
+
+    result = await tool.run(to=["a@b.com"], subject="Hi", body="Hello there")
+
+    assert result.success is True
+    assert result.mutated is True
+    mock_client.draft_response.assert_called_once()

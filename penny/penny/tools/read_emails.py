@@ -58,10 +58,7 @@ class ReadEmailsTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Read emails and summarize relevant content."""
         args = ReadEmailsArgs(**kwargs)
-        email_ids = args.email_ids
-        if not email_ids:
-            return ToolResult(message=NO_EMAILS_TO_READ)
-        emails = await self._client.read_emails(email_ids)
+        emails = await self._client.read_emails(args.email_ids)
         if not emails:
             return ToolResult(message=NO_EMAILS_TO_READ)
 

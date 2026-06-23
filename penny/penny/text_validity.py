@@ -26,6 +26,10 @@ from penny.constants import PennyConstants
 
 _WORD_TOKEN_RE = re.compile(r"\w+")
 
+# A collection's extraction_prompt drives the collector each cycle; one too short
+# to carry a numbered recipe leaves the collector with nothing to do.
+EXTRACTION_PROMPT_MIN_CHARS = 25
+
 # Matches content that is a bare URL with no surrounding description.
 _BARE_URL_RE = re.compile(r"^https?://\S+$")
 
@@ -136,6 +140,81 @@ def half_formed_send_reason(content: str) -> str | None:
     if is_truncated(content):
         return "content ends on an ellipsis ('…' or '...'), cut off mid-thought"
     return None
+
+
+def check_extraction_prompt(prompt: str | None) -> str | None:
+    """Return an error string if prompt is set but too short, else None.
+
+    The string-returning form, used where a prompt is read from a stored row and
+    its absence/shortness only *gates* an action (the collector's readiness
+    check) rather than rejecting a tool call.  The arg-validator form
+    (:func:`require_extraction_prompt`) wraps this for the tool surface.
+    """
+    if prompt is None or len(prompt) >= EXTRACTION_PROMPT_MIN_CHARS:
+        return None
+    return (
+        f"extraction_prompt is too short ({len(prompt)} chars — minimum "
+        f"{EXTRACTION_PROMPT_MIN_CHARS}).  Provide a full numbered-step prompt "
+        f"(see the collection_create description for the required shape)."
+    )
+
+
+def check_description(description: str) -> str | None:
+    """Return an error string if a required description is blank, else None.
+
+    The description doubles as the stage-1 routing anchor, so a blank one
+    would create a memory that can never be matched.  Reject it loudly rather
+    than embedding an empty string.
+    """
+    if is_blank(description):
+        return "description cannot be blank — provide a content-reflective one-line summary."
+    return None
+
+
+def require_extraction_prompt(value: str) -> str:
+    """Arg-validator: raise if a required ``extraction_prompt`` is too short.
+
+    The ``Annotated`` validator form of :func:`check_extraction_prompt` — the
+    same rule, raised as a ``ValueError`` so the tool's ``args_model`` rejects
+    the call before ``execute`` with the actionable envelope.
+    """
+    if error := check_extraction_prompt(value):
+        raise ValueError(error)
+    return value
+
+
+def require_non_blank_description(value: str) -> str:
+    """Arg-validator: raise if a required ``description`` is blank."""
+    if error := check_description(value):
+        raise ValueError(error)
+    return value
+
+
+def require_non_blank_log_content(value: str) -> str:
+    """Arg-validator: raise if a log append's ``content`` is blank.
+
+    Blank-only is refused (a bare URL is still a valid log entry, unlike the
+    collection corpus filter), so nothing empty joins an append-only stream.
+    """
+    if is_blank(value):
+        raise ValueError("log entry content is blank — provide non-empty text.")
+    return value
+
+
+def require_non_degenerate_content(value: str) -> str:
+    """Arg-validator: raise if a collection entry's replacement ``content`` is
+    degenerate (blank, bare URL, or a known bail-out phrase).
+
+    Mirrors the corpus write filter (:func:`degenerate_reason`) at the tool
+    surface, pointing the model at ``collection_delete_entry`` if removal was the
+    intent rather than a replacement.
+    """
+    if reason := degenerate_reason(value):
+        raise ValueError(
+            f"replacement content rejected — {reason}. Provide the full replacement "
+            f"text, or use collection_delete_entry if you meant to remove the entry."
+        )
+    return value
 
 
 def is_low_info(content: str) -> bool:
