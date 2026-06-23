@@ -280,11 +280,28 @@ export interface PromptLogRun {
   run_outcome: RunOutcome | null;
   run_reason: string | null;
   run_target: string | null;
+  // Structural run-health (the same classifier Penny's quality collector reads)
+  // and the concise, copy-pasteable run record.  Present for collector runs.
+  health: RunHealth;
+  record: string;
   prompts: PromptLogEntry[];
 }
 
 /** First-class outcome of a collector cycle (mirrors penny's RunOutcome). */
 export type RunOutcome = "failed" | "no_work" | "worked" | "incomplete" | "cancelled";
+
+/** A run-health flag key (mirrors penny's RunHealth.flags). */
+export type RunHealthFlag = "no_work_done" | "incomplete" | "tool_failures" | "half_formed_send";
+
+/** Structural failure signals for one collector run (mirrors penny's RunHealth). */
+export interface RunHealth {
+  bailed: boolean;
+  incomplete: boolean;
+  tool_failures: number;
+  degenerate_send: boolean;
+  flags: RunHealthFlag[];
+  regressive: boolean;
+}
 
 export interface WsIncomingPromptLogsPayload {
   type: typeof WsIncomingType.PromptLogsResponse;
@@ -630,6 +647,8 @@ export interface RuntimePromptLogsRequest {
   offset?: number;
   /** Substring filter over each run's sent messages / response / thinking. */
   query?: string;
+  /** Keep only regressive runs (a bail / incomplete / tool-failure / half-formed send). */
+  flagged_only?: boolean;
 }
 
 /** Background → prompts page: prompt logs data */

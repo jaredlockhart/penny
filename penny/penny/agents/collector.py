@@ -182,7 +182,7 @@ class Collector(BackgroundAgent):
                     # One determination of this cycle's outcome, used for the
                     # audit log, the promptlog tag, and the throttle alike.
                     outcome, summary = self._cycle_result(response)
-                    self._tag_promptlog_run(run_id, outcome, summary)
+                    self._tag_promptlog_run(run_id, outcome, summary, self._tool_failures(response))
                     self._apply_throttle(collection, outcome)
                 self._current_target = None
         _, summary = self._extract_done_args(response)
@@ -299,17 +299,34 @@ class Collector(BackgroundAgent):
 
     # ── Per-cycle audit (on the promptlog run itself) ─────────────────────
 
-    def _tag_promptlog_run(self, run_id: str, outcome: RunOutcome, summary: str) -> None:
+    def _tag_promptlog_run(
+        self, run_id: str, outcome: RunOutcome, summary: str, tool_failures: int
+    ) -> None:
         """Stamp the cycle outcome onto the matching promptlog run.
 
         Drives the outcome badge in the addon's prompts tab — the same
-        ``(outcome, summary)`` the audit log gets.  (The run's collection is
-        already on every prompt via the write-time ``run_target`` stamp.)
-        ``run_id`` is the caller's UUID for this cycle; ``set_run_outcome`` is a
-        no-op if no promptlog rows exist for it (the cycle raised before the loop
-        ever logged a prompt).
+        ``(outcome, summary)`` the audit log gets — plus ``tool_failures`` (the
+        count of failed tool calls), which the run-health classifier reads to
+        flag a tool-failure spiral.  (The run's collection is already on every
+        prompt via the write-time ``run_target`` stamp.)  ``run_id`` is the
+        caller's UUID for this cycle; ``set_run_outcome`` is a no-op if no
+        promptlog rows exist for it (the cycle raised before the loop ever logged
+        a prompt).
         """
-        self.db.messages.set_run_outcome(run_id, outcome.value, summary)
+        self.db.messages.set_run_outcome(run_id, outcome.value, summary, tool_failures)
+
+    @staticmethod
+    def _tool_failures(response: ControllerResponse | None) -> int:
+        """How many tool calls in this cycle returned a failure.
+
+        Reads the authoritative per-call ``ToolCallRecord.failed`` flag (set from
+        each tool's structured ``ToolResult.success``) — the same records
+        ``_produced_work`` scans for ``mutated``.  Persisted so the classifier
+        never has to guess a failure from framed tool-result text.
+        """
+        if response is None:
+            return 0
+        return sum(1 for record in response.tool_calls if record.failed)
 
     def _tag_promptlog_run_cancelled(self, run_id: str) -> None:
         """Stamp a cycle that was cut off by foreground activity.

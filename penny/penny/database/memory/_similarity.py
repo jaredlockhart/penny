@@ -137,6 +137,24 @@ _WRITE_BAILOUT_PHRASES: frozenset[str] = frozenset(
 )
 
 
+# A message that trails off into a run of dots followed by question/exclamation
+# spam with no closing clause — the fingerprint of a half-formed generation.  The
+# real case this targets: a notifier cycle that sent "Hi there! ......???" before
+# the actual notification.  Deliberately narrow (≥3 dots immediately followed by
+# ≥2 ?/!) so legitimate punctuation ("Wait... what?!", "Hmm...?") is never caught.
+_UNFINISHED_FRAGMENT_RE = re.compile(r"\.{3,}\s*[?!]{2,}")
+
+
+def is_unfinished_fragment(content: str) -> bool:
+    """True if ``content`` ends in ellipsis + ?/! spam — a half-formed message.
+
+    Complements :func:`degenerate_reason` (which only catches blank / bare-URL /
+    bail-out content): a message can carry word tokens yet still be an unfinished
+    fragment a user should never have received.
+    """
+    return bool(_UNFINISHED_FRAGMENT_RE.search(content))
+
+
 def is_blank(content: str) -> bool:
     """Return True if ``content`` carries no word tokens at all.
 

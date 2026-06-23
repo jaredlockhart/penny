@@ -1356,6 +1356,86 @@ class TestBrowserPromptLogHandlers:
         # Outcome-less run keeps its collection name (the bug: it was dropped).
         assert runs["run2"]["run_outcome"] is None
         assert runs["run2"]["run_target"] == "knowledge"
+        # Each run carries the shared run-health (badges + filter) and the concise
+        # record (the SAME representation Penny's quality collector reads).
+        assert runs["run1"]["health"]["regressive"] is False
+        assert runs["run1"]["health"]["flags"] == []
+        assert runs["run1"]["record"].startswith("[board-games] wrote 2 new games")
+
+    @pytest.mark.asyncio
+    async def test_prompt_logs_flagged_only(self, tmp_path):
+        """flagged_only returns only regressive runs — and carries their flags.
+
+        A half-formed send on an otherwise-worked run (the real notifier shape)
+        is regressive; a clean worked run is not."""
+        channel, db = self._channel(tmp_path)
+        # Healthy worked run.
+        db.messages.log_prompt(
+            model="m",
+            messages=[{"role": "user", "content": "q"}],
+            response={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c0",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "send_message",
+                                        "arguments": '{"content": "A new title dropped."}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            agent_name="collector",
+            run_id="good",
+            run_target="games",
+            duration_ms=1,
+        )
+        db.messages.set_run_outcome("good", "worked", "delivered a notification")
+        # Worked run that ALSO sent a half-formed message.
+        db.messages.log_prompt(
+            model="m",
+            messages=[{"role": "user", "content": "q"}],
+            response={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c0",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "send_message",
+                                        "arguments": '{"content": "Hi there! ......???"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            agent_name="collector",
+            run_id="bad",
+            run_target="games",
+            duration_ms=1,
+        )
+        db.messages.set_run_outcome("bad", "worked", "delivered a notification")
+
+        flagged = await self._request_prompt_logs(channel, {"flagged_only": True})
+        assert {r["run_id"] for r in flagged["runs"]} == {"bad"}
+        assert flagged["runs"][0]["health"]["degenerate_send"] is True
+        assert "half_formed_send" in flagged["runs"][0]["health"]["flags"]
+
+        # Without the filter, both runs come back.
+        both = await self._request_prompt_logs(channel)
+        assert {r["run_id"] for r in both["runs"]} == {"good", "bad"}
 
     @pytest.mark.asyncio
     async def test_prompt_logs_include_token_counts(self, tmp_path):
@@ -1377,7 +1457,7 @@ class TestBrowserPromptLogHandlers:
         _, db = self._channel(tmp_path)
         self._log_prompt(db, "collector", "run1")
         self._log_prompt(db, "collector", "run1")
-        db.messages.set_run_outcome("run1", "failed", "duplicate of 'test'")
+        db.messages.set_run_outcome("run1", "failed", "duplicate of 'test'", tool_failures=3)
 
         with Session(db.engine) as session:
             logs = session.exec(
@@ -1386,8 +1466,11 @@ class TestBrowserPromptLogHandlers:
 
         assert logs[0].run_outcome is None
         assert logs[0].run_reason is None
+        assert logs[0].tool_failures is None
         assert logs[1].run_outcome == "failed"
         assert logs[1].run_reason == "duplicate of 'test'"
+        # Failed-tool count is stamped on the same last row as the outcome.
+        assert logs[1].tool_failures == 3
 
     def test_log_prompt_stamps_run_target(self, tmp_path):
         """run_target is written on the prompt row at log time (every prompt),

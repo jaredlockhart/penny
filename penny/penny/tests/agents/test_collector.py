@@ -393,6 +393,22 @@ def test_cycle_result_classifies_worked_no_work_failed():
     assert Collector._cycle_result(no_done)[0] == RunOutcome.FAILED
 
 
+def test_tool_failures_counts_failed_calls():
+    """The persisted failed-tool count is the number of ToolCallRecords that
+    failed — the structural signal the run-health classifier reads."""
+    assert Collector._tool_failures(None) == 0
+    response = ControllerResponse(
+        answer="",
+        tool_calls=[
+            ToolCallRecord(tool="browse", arguments={}, failed=True),
+            ToolCallRecord(tool="collection_write", arguments={}, mutated=True),
+            ToolCallRecord(tool="log_read", arguments={}, failed=True),
+            ToolCallRecord(tool="done", arguments={"success": True, "summary": "ok"}),
+        ],
+    )
+    assert Collector._tool_failures(response) == 2
+
+
 # ── Promptlog run-outcome tagging ────────────────────────────────────────
 
 
@@ -409,7 +425,7 @@ def test_tag_promptlog_run_stamps_outcome_reason_target(test_config, tmp_path):
         run_target="board-games",
     )
 
-    collector._tag_promptlog_run("run-xyz", RunOutcome.WORKED, "wrote 2 new games")
+    collector._tag_promptlog_run("run-xyz", RunOutcome.WORKED, "wrote 2 new games", 0)
 
     runs = db.messages.get_prompt_log_runs()
     assert runs[0]["run_outcome"] == "worked"
@@ -423,7 +439,7 @@ def test_tag_promptlog_run_with_unknown_run_id_is_noop(test_config, tmp_path):
     crashing or smearing onto an unrelated row."""
     collector, db = _make_collector(test_config, tmp_path)
 
-    collector._tag_promptlog_run("never-logged", RunOutcome.FAILED, "x")
+    collector._tag_promptlog_run("never-logged", RunOutcome.FAILED, "x", 0)
 
     assert db.messages.get_prompt_log_runs() == []
 
@@ -617,8 +633,8 @@ def test_tag_promptlog_run_isolates_neighbouring_cycles(test_config, tmp_path):
         run_target=target_b.name,
     )
 
-    collector._tag_promptlog_run("run-A", RunOutcome.NO_WORK, "ok-A")
-    collector._tag_promptlog_run("run-B", RunOutcome.NO_WORK, "ok-B")
+    collector._tag_promptlog_run("run-A", RunOutcome.NO_WORK, "ok-A", 0)
+    collector._tag_promptlog_run("run-B", RunOutcome.NO_WORK, "ok-B", 0)
 
     runs = {r["run_id"]: r for r in db.messages.get_prompt_log_runs()}
     assert runs["run-A"]["run_target"] == "notified-thoughts"

@@ -181,7 +181,7 @@ function handleRuntimeMessage(message: RuntimeMessage): void {
   } else if (message.type === RuntimeMessageType.ScheduleDelete) {
     sendScheduleDelete(message.schedule_id);
   } else if (message.type === RuntimeMessageType.PromptLogsRequest) {
-    requestPromptLogs(message.agent_name, message.offset, message.query);
+    requestPromptLogs(message.agent_name, message.offset, message.query, message.flagged_only);
   } else if (message.type === RuntimeMessageType.MemoriesRequest) {
     requestMemories(message.query);
   } else if (message.type === RuntimeMessageType.MemoryDetailRequest) {
@@ -439,12 +439,18 @@ function sendScheduleDelete(scheduleId: number): void {
   ws.send(JSON.stringify({ type: WsOutgoingType.ScheduleDelete, schedule_id: scheduleId }));
 }
 
-function requestPromptLogs(agentName?: string, offset?: number, query?: string): void {
+function requestPromptLogs(
+  agentName?: string,
+  offset?: number,
+  query?: string,
+  flaggedOnly?: boolean,
+): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const payload: Record<string, unknown> = { type: WsOutgoingType.PromptLogsRequest };
   if (agentName) payload.agent_name = agentName;
   if (offset) payload.offset = offset;
   if (query) payload.query = query;
+  if (flaggedOnly) payload.flagged_only = true;
   ws.send(JSON.stringify(payload));
 }
 

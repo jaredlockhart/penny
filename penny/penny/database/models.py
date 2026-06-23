@@ -27,6 +27,10 @@ class PromptLog(SQLModel, table=True):
     run_outcome: str | None = None  # RunOutcome: failed|no_work|worked|incomplete|cancelled
     run_reason: str | None = None  # Free-text reason from done(summary=...)
     run_target: str | None = None  # Collection name the cycle was bound to
+    # Count of failed tool calls in the run (ToolCallRecord.failed), stamped on
+    # the last prompt alongside run_outcome.  NULL = not measured (old rows,
+    # untagged/non-collector runs); the run-health classifier reads NULL as 0.
+    tool_failures: int | None = None
 
     def get_messages(self) -> list[dict]:
         return json.loads(self.messages)

@@ -81,6 +81,15 @@ _OK_NEWS_PROMPT = (
     "3. If a genuinely new tool was written, send_message one sentence + URL.\n"
     "4. done()."
 )
+# A notify prompt whose run sent the user a half-formed message before the real
+# one — the prompt lacks a "compose the complete message first" step.
+_NEWS_NOTIFY_PROMPT = (
+    "Tell me about newly released board games.\n"
+    "1. browse(...) for newly released board games; read pages.\n"
+    '2. collection_write("board-game-news", entries=[...]).\n'
+    "3. send_message about the new game.\n"
+    "4. done()."
+)
 
 
 def _seed_run(
@@ -91,6 +100,7 @@ def _seed_run(
     outcome: RunOutcome,
     summary: str,
     calls: list[tuple[str, dict]],
+    tool_failures: int = 0,
 ) -> None:
     """Seed one collector run as a ``promptlog`` row (+ its outcome).
 
@@ -126,7 +136,7 @@ def _seed_run(
         run_id=run_id,
         run_target=suspect,
     )
-    db.messages.set_run_outcome(run_id, outcome.value, summary)
+    db.messages.set_run_outcome(run_id, outcome.value, summary, tool_failures)
 
 
 def _seed(*, suspect: str, description: str, intent: str, prompt: str, runs):
@@ -447,6 +457,129 @@ async def test_healthy(collector_eval) -> None:
                                 "success": True,
                                 "summary": "wrote 1 new tip and pinged about watering",
                             },
+                        ),
+                    ],
+                }
+            ],
+        ),
+        snapshot=_snapshot(suspect),
+        score=_score_no_op(suspect),
+        min_pass_rate=None,
+    )
+
+
+async def test_repairs_half_formed_send(collector_eval) -> None:
+    """A worked run that ALSO sent a half-formed message (``⚠ HALF-FORMED SEND``)
+    is a tier-1 regression — the user received junk.  Quality must fix the prompt
+    (compose the complete message before the one send) and announce it.  Mirrors
+    the real notifier cycle that sent "Hi there! ......???" before the real one."""
+    suspect = "board-game-news"
+    await collector_eval(
+        case_id="quality-half-formed-send",
+        collection=PennyConstants.MEMORY_QUALITY_COLLECTION,
+        seed=_seed(
+            suspect=suspect,
+            description="News about newly released board games, delivered to me.",
+            intent="Tell me about newly released board games.",
+            prompt=_NEWS_NOTIFY_PROMPT,
+            runs=[
+                {
+                    "run_id": "bg-run-1",
+                    "outcome": RunOutcome.WORKED,
+                    "summary": "delivered news about a new board game",
+                    "calls": [
+                        (
+                            "collection_write",
+                            {
+                                "memory": suspect,
+                                "entries": [
+                                    {"key": "ark-nova-2", "content": "Ark Nova 2 announced"}
+                                ],
+                            },
+                        ),
+                        ("send_message", {"content": "Hi there! ......???"}),
+                        ("send_message", {"content": "A new board game dropped: Ark Nova 2."}),
+                        (
+                            "done",
+                            {"success": True, "summary": "delivered news about a new board game"},
+                        ),
+                    ],
+                }
+            ],
+        ),
+        snapshot=_snapshot(suspect),
+        score=_score_update(suspect, forbidden=None),
+        min_pass_rate=None,
+    )
+
+
+async def test_incomplete_run_is_not_drift(collector_eval) -> None:
+    """An ``⚠ INCOMPLETE`` run (work landed, hit the step ceiling without done())
+    is capacity, NOT drift — quality must leave the prompt alone (over-correction
+    guard for the new flag)."""
+    suspect = "dev-tools"
+    await collector_eval(
+        case_id="quality-incomplete-not-drift",
+        collection=PennyConstants.MEMORY_QUALITY_COLLECTION,
+        seed=_seed(
+            suspect=suspect,
+            description="Notable new developer tools, with a ping on good ones.",
+            intent="Track new developer tools and ping me when a good one shows up.",
+            prompt=_OK_NEWS_PROMPT,
+            runs=[
+                {
+                    "run_id": "dev-incomplete-1",
+                    "outcome": RunOutcome.INCOMPLETE,
+                    "summary": "max steps exceeded after writing",
+                    "calls": [
+                        ("browse", {"queries": ["new developer tools 2026"]}),
+                        (
+                            "collection_write",
+                            {
+                                "memory": suspect,
+                                "entries": [{"key": "zed-1.0", "content": "Zed editor hit 1.0"}],
+                            },
+                        ),
+                    ],
+                }
+            ],
+        ),
+        snapshot=_snapshot(suspect),
+        score=_score_no_op(suspect),
+        min_pass_rate=None,
+    )
+
+
+async def test_tool_failure_is_not_drift(collector_eval) -> None:
+    """A ``⚠ TOOL FAILURES`` run (a tool errored and the run kept going) is
+    transience, NOT drift — quality must leave the prompt alone."""
+    suspect = "dev-tools"
+    await collector_eval(
+        case_id="quality-tool-failure-not-drift",
+        collection=PennyConstants.MEMORY_QUALITY_COLLECTION,
+        seed=_seed(
+            suspect=suspect,
+            description="Notable new developer tools, with a ping on good ones.",
+            intent="Track new developer tools and ping me when a good one shows up.",
+            prompt=_OK_NEWS_PROMPT,
+            runs=[
+                {
+                    "run_id": "dev-toolfail-1",
+                    "outcome": RunOutcome.WORKED,
+                    "summary": "wrote one tool after a failed browse",
+                    "tool_failures": 1,
+                    "calls": [
+                        ("browse", {"queries": ["new developer tools 2026"]}),
+                        (
+                            "collection_write",
+                            {
+                                "memory": suspect,
+                                "entries": [{"key": "zed-1.0", "content": "Zed editor hit 1.0"}],
+                            },
+                        ),
+                        (
+                            "done",
+                            {"success": True, "summary": "wrote one tool after a failed browse"},
                         ),
                     ],
                 }

@@ -38,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import numpy as np
+from pydantic import BaseModel, computed_field
 from sqlmodel import Session, select
 
 from penny.config_params import RuntimeParams
@@ -730,6 +731,176 @@ def _write_contents(fields: dict) -> str:
     return "; ".join(str(e.get("content", "")) for e in entries if isinstance(e, dict))
 
 
+def _run_outcome(prompts: list[PromptLog]) -> tuple[str | None, str | None, str | None]:
+    """Outcome/reason/target from the last prompt carrying them."""
+    for prompt in reversed(prompts):
+        if prompt.run_outcome is not None or prompt.run_reason:
+            return prompt.run_outcome, prompt.run_reason, prompt.run_target
+    return None, None, prompts[0].run_target if prompts else None
+
+
+def _run_tool_calls(prompts: list[PromptLog]) -> list[tuple[str, object]]:
+    """Ordered (name, arguments) for every tool call across the run's prompts."""
+    calls: list[tuple[str, object]] = []
+    for prompt in prompts:
+        response = json.loads(prompt.response) if prompt.response else {}
+        for choice in response.get("choices", []):
+            message = choice.get("message") or {}
+            for tool_call in message.get("tool_calls") or []:
+                function = tool_call.get("function") or {}
+                calls.append((function.get("name") or "?", _parse_tool_args(function)))
+    return calls
+
+
+def _run_tool_failures(prompts: list[PromptLog]) -> int:
+    """The persisted failed-tool-call count, off the run's outcome-bearing row.
+
+    Stamped by ``set_run_outcome`` on the last prompt; NULL on old/untagged rows
+    reads as zero (not measured)."""
+    for prompt in reversed(prompts):
+        if prompt.run_outcome is not None:
+            return prompt.tool_failures or 0
+    return 0
+
+
+def _is_degenerate_send(content: str) -> bool:
+    """True if a sent message has no real content the user should have received.
+
+    Reuses the corpus content filter (blank / bare-URL / bail-out phrase) and
+    adds the unfinished-fragment fingerprint (``"Hi there! ......???"``)."""
+    return sim.degenerate_reason(content) is not None or sim.is_unfinished_fragment(content)
+
+
+class RunHealth(BaseModel):
+    """Structural failure signals for one collector run, derived from its
+    ``promptlog`` rows.  One classifier feeds both Penny's own self-review (the
+    run record her ``quality`` collector reads) and the addon's prompts tab
+    (badges + the "flagged only" filter) — what we use to judge whether a run
+    regressed is exactly what Penny sees of it.
+
+    All signals are deterministic and read from stored data — no model judgment:
+    ``bailed`` (did no real work — reached ``done()`` / made no tool call without
+    any read/write/browse first), ``incomplete`` (hit the step ceiling without a
+    closing ``done()``), ``tool_failures`` (count of failed tool calls in the
+    run), ``degenerate_send`` (a message went out with no real content)."""
+
+    bailed: bool = False
+    incomplete: bool = False
+    tool_failures: int = 0
+    degenerate_send: bool = False
+
+    @computed_field
+    @property
+    def flags(self) -> list[str]:
+        """Stable flag keys for badges / filtering, in render order."""
+        out: list[str] = []
+        if self.bailed:
+            out.append("no_work_done")
+        if self.incomplete:
+            out.append("incomplete")
+        if self.tool_failures:
+            out.append("tool_failures")
+        if self.degenerate_send:
+            out.append("half_formed_send")
+        return out
+
+    @computed_field
+    @property
+    def regressive(self) -> bool:
+        """Whether this run is a candidate to review (any flag set)."""
+        return bool(self.flags)
+
+
+def classify_run(prompts: list[PromptLog]) -> RunHealth:
+    """The shared run-health determination over a run's ``promptlog`` rows."""
+    if not prompts:
+        return RunHealth()
+    outcome, _reason, _target = _run_outcome(prompts)
+    calls = _run_tool_calls(prompts)
+    non_done = [name for name, _ in calls if name != "done"]
+    bailed = outcome in (RunOutcome.NO_WORK.value, RunOutcome.FAILED.value) and not non_done
+    degenerate = any(
+        name == "send_message" and _is_degenerate_send(_send_content(args)) for name, args in calls
+    )
+    return RunHealth(
+        bailed=bailed,
+        incomplete=outcome == RunOutcome.INCOMPLETE.value,
+        tool_failures=_run_tool_failures(prompts),
+        degenerate_send=degenerate,
+    )
+
+
+def _send_content(args: object) -> str:
+    """The ``content`` of a ``send_message`` call's parsed arguments."""
+    fields = cast("dict[str, Any]", args if isinstance(args, dict) else {})
+    content = fields.get("content")
+    return str(content) if content is not None else ""
+
+
+def _health_lines(health: RunHealth) -> list[str]:
+    """The ⚠ explanation lines for a run record, one per set flag, in order.
+
+    The verbose form Penny's ``quality`` collector reads; the addon derives its
+    compact badges from the same ``RunHealth.flags``."""
+    lines: list[str] = []
+    if health.bailed:
+        lines.append(
+            "⚠ NO WORK DONE — reached done() (or made no tool call) without any "
+            "read/write/browse step first; the collector is not following its "
+            "instructions"
+        )
+    if health.incomplete:
+        lines.append(
+            "⚠ INCOMPLETE — hit the step ceiling without a closing done(); work "
+            "landed but the cycle never finished cleanly"
+        )
+    if health.tool_failures:
+        lines.append(
+            f"⚠ TOOL FAILURES ({health.tool_failures}) — a tool call returned an "
+            "error and the run kept going"
+        )
+    if health.degenerate_send:
+        lines.append(
+            "⚠ HALF-FORMED SEND — a message went out with no real content (empty, "
+            "punctuation-only, or an unfinished fragment)"
+        )
+    return lines
+
+
+def render_run_record(prompts: list[PromptLog]) -> str:
+    """One run as ``[target] summary`` + its health flags + tool-call trace.
+
+    The single representation shared by Penny's self-review (the ``collector-runs``
+    record her ``quality`` collector reads) and the addon's prompts tab.
+    ``classify_run`` determines the run's health; ``_health_lines`` renders the ⚠
+    flags (the addon derives its compact badges from the same ``RunHealth``).  The
+    trace shows:
+
+    - **bailed** — the single meagre call (or ``(no tool calls)``): the run jumped
+      to ``done()`` / acted not at all, so there's nothing but the bail to see;
+    - **worked / incomplete / tool-failure / half-formed-send** — the full ordered
+      non-``done()`` trace, so the work (or the failing/degenerate call) can be
+      judged in context;
+    - **everything else** (a quiet cycle that DID read, a failed/cancelled run that
+      DID call real tools with no new flag) — header-only, no trace to tempt an
+      over-correction.
+
+    Content is never truncated."""
+    if not prompts:
+        return "[?] (no data)"
+    health = classify_run(prompts)
+    outcome, reason, target = _run_outcome(prompts)
+    header = f"[{target or '?'}] {reason or outcome or ''}".rstrip()
+    lines = [header, *_health_lines(health)]
+    calls = _run_tool_calls(prompts)
+    non_done = [(name, args) for name, args in calls if name != "done"]
+    if health.bailed:
+        lines.append("(no tool calls)" if not calls else render_tool_call(*calls[0]))
+    elif outcome == RunOutcome.WORKED.value or health.regressive:
+        lines.extend(render_tool_call(name, args) for name, args in non_done)
+    return "\n".join(lines)
+
+
 class RunLog(Log):
     """Read facade over ``promptlog`` for the ``collector-runs`` log.
 
@@ -841,7 +1012,7 @@ class RunLog(Log):
             id=last_id,
             memory_name=self.name,
             key=None,
-            content=self._render_run_record(grouped.get(run_id) or []),
+            content=render_run_record(grouped.get(run_id) or []),
             author=PennyConstants.MessageAuthor.COLLECTOR,
             created_at=timestamp,
         )
@@ -859,70 +1030,15 @@ class RunLog(Log):
                 grouped.setdefault(prompt.run_id, []).append(prompt)
         return grouped
 
-    @classmethod
-    def _render_run_record(cls, prompts: list[PromptLog]) -> str:
-        """One run as ``[target] summary`` + EVERY tool call it made (incl. ``done()``).
-
-        The quality collector needs to see not just what a worked run produced but
-        *whether the run followed its instructions at all* — so every completed run
-        renders its outcome header plus the full, ordered list of its tool calls,
-        ``done()`` included.  Two failure shapes become visible this way:
-        ``(no tool calls)`` (the run exited without acting) and a lone ``done(...)``
-        (it jumped straight to done without reading/working).  A healthy quiet cycle
-        still shows its read step before ``done()``, so it reads as fine.  Content is
-        never truncated."""
-        if not prompts:
-            return "[?] (no data)"
-        outcome, reason, target = cls._run_outcome(prompts)
-        header = f"[{target or '?'}] {reason or outcome or ''}".rstrip()
-        lines = [header]
-        calls = cls._run_tool_calls(prompts)
-        non_done = [(name, args) for name, args in calls if name != "done"]
-        # A non-worked run that called no tool other than done() (or no tool at all)
-        # bailed — it never read/wrote/browsed.  Flag THAT deterministically (quality
-        # acts on the positive signal, not on inferring an absent read step), and show
-        # the meagre calls.  Worked runs show their trace so intent can be judged.
-        # Everything else (a quiet cycle that DID read, a failed/cancelled run that DID
-        # call real tools) stays header-only — no trace to tempt an over-correction.
-        bailed = outcome in (RunOutcome.NO_WORK.value, RunOutcome.FAILED.value) and not non_done
-        if bailed:
-            lines.append(
-                "⚠ NO WORK DONE — reached done() (or made no tool call) without any "
-                "read/write/browse step first; the collector is not following its "
-                "instructions"
-            )
-            lines.append("(no tool calls)" if not calls else render_tool_call(*calls[0]))
-        elif outcome == RunOutcome.WORKED.value:
-            lines.extend(render_tool_call(name, args) for name, args in non_done)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _run_outcome(prompts: list[PromptLog]) -> tuple[str | None, str | None, str | None]:
-        """Outcome/reason/target from the last prompt carrying them."""
-        for prompt in reversed(prompts):
-            if prompt.run_outcome is not None or prompt.run_reason:
-                return prompt.run_outcome, prompt.run_reason, prompt.run_target
-        return None, None, prompts[0].run_target
-
-    @staticmethod
-    def _run_tool_calls(prompts: list[PromptLog]) -> list[tuple[str, object]]:
-        """Ordered (name, arguments) for every tool call across the run's prompts."""
-        calls: list[tuple[str, object]] = []
-        for prompt in prompts:
-            response = json.loads(prompt.response) if prompt.response else {}
-            for choice in response.get("choices", []):
-                message = choice.get("message") or {}
-                for tool_call in message.get("tool_calls") or []:
-                    function = tool_call.get("function") or {}
-                    calls.append((function.get("name") or "?", _parse_tool_args(function)))
-        return calls
-
 
 __all__ = [
     "Collection",
     "Log",
     "Memory",
     "render_tool_call",
+    "render_run_record",
+    "classify_run",
+    "RunHealth",
     "MessageLogMemory",
     "RunLog",
 ]

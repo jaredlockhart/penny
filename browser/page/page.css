@@ -526,6 +526,210 @@ h1 {
   background: rgba(184, 134, 11, 0.1);
 }
 
+/* --- Run-health flag chips (one per RunHealth.flags) --- */
+
+.run-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px 44px;
+}
+
+.run-health-flag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #dc3545;
+  background: rgba(220, 53, 69, 0.1);
+}
+
+.run-health-flag i {
+  margin-right: 3px;
+}
+
+/* Incomplete / tool-failures read as capacity (amber), not a hard regression. */
+.run-health-incomplete,
+.run-health-tool_failures {
+  color: #fd7e14;
+  background: rgba(253, 126, 20, 0.1);
+}
+
+/* Flagged-only toggle (in the agent-tabs row). */
+.sub-tab.flagged-toggle {
+  margin-left: auto;
+}
+
+.sub-tab.flagged-toggle.active {
+  color: #dc3545;
+  border-color: #dc3545;
+}
+
+/* --- Copy-to-clipboard buttons (run / prompt / turn JSON) --- */
+
+.copy-btn {
+  flex-shrink: 0;
+  margin-left: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+/* Role chip is a fixed-width column so the previews beside it line up. */
+.prompt-section-role {
+  flex-shrink: 0;
+  min-width: 96px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* One-line preview of the turn's content, filling the row, trimmed to fit. */
+.prompt-section-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* Once expanded, the full content shows below — drop the inline preview. */
+.prompt-section.expanded .prompt-section-preview {
+  display: none;
+}
+
+/* Pin the copy button to the right whether the preview is shown (collapsed) or
+   hidden (expanded) — otherwise it slides left when the preview disappears. */
+.prompt-section-label .copy-btn {
+  margin-left: auto;
+}
+
+/* --- Per-run view tabs (Prompts | Record) --- */
+
+.run-view-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.run-view {
+  display: none;
+}
+
+.run-view.active {
+  display: block;
+}
+
+/* The textual record — what Penny's quality collector reads of this run. */
+.run-view-record {
+  position: relative;
+  padding: 12px;
+}
+
+.run-view-record .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  /* Sit above the white code panel rather than tinting with it. */
+  background: #ffffff;
+  color: #57606a;
+  border-color: #d0d7de;
+  z-index: 1;
+}
+
+/* --- Run record as a syntax-highlighted code listing (light editor look) --- */
+
+.record-code {
+  margin: 4px 0 0;
+  background: #ffffff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #24292e;
+}
+
+.record-line {
+  display: flex;
+  align-items: flex-start;
+}
+
+.record-line:hover {
+  background: #f6f8fa;
+}
+
+.record-ln {
+  flex-shrink: 0;
+  width: 34px;
+  padding: 0 8px;
+  text-align: right;
+  color: #b0b6be;
+  background: #f6f8fa;
+  border-right: 1px solid #eaecef;
+  user-select: none;
+}
+
+.record-src {
+  flex: 1;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The header line and ⚠ flags read as comments — dim, with flag colour. */
+.record-line-header .record-src {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.record-line-flag .record-src {
+  color: #b31d28;
+  background: rgba(220, 53, 69, 0.06);
+}
+
+.record-line-capacity .record-src {
+  color: #bf6a02;
+  background: rgba(253, 126, 20, 0.07);
+}
+
+/* Token colours (VS Code light-ish). */
+.tok-fn {
+  color: #6f42c1;
+}
+
+.tok-str {
+  color: #a31515;
+}
+
+.tok-num {
+  color: #098658;
+}
+
+.tok-kw {
+  color: #0000ff;
+}
+
+.tok-key {
+  color: #001080;
+}
+
 .run-meta,
 .prompt-meta {
   font-size: 12px;

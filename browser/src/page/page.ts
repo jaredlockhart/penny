@@ -13,6 +13,8 @@ import {
   type MemorySection,
   type PromptLogEntry,
   type PromptLogRun,
+  type RunHealth,
+  type RunHealthFlag,
   type RunOutcome,
   type RuntimeCollectionTriggerResult,
   type RuntimeConfigParam,
@@ -54,6 +56,7 @@ const promptsLoadMore = document.getElementById("prompts-load-more")!;
 const promptsLoadMoreBtn = document.getElementById("prompts-load-more-btn")!;
 let activeAgentFilter = "";
 let promptSearch = "";
+let flaggedOnly = false;
 
 const AGENT_LABELS: Record<string, string> = {
   collector: '<i class="fa-solid fa-database"></i> Collector',
@@ -201,10 +204,17 @@ function handleMessage(message: RuntimeMessage): void {
 // ============================================================
 
 function setupPrompts(): void {
-  for (const btn of Array.from(document.querySelectorAll("#agent-tabs .sub-tab"))) {
+  // The flagged-only toggle lives in the same row but is NOT an agent filter —
+  // exclude it so it doesn't get the agent-switch handler (which would fire a
+  // second, unfiltered request and race the flagged one).
+  for (const btn of Array.from(
+    document.querySelectorAll("#agent-tabs .sub-tab:not(.flagged-toggle)"),
+  )) {
     btn.addEventListener("click", () => {
       activeAgentFilter = btn.getAttribute("data-agent") ?? "";
-      for (const b of Array.from(document.querySelectorAll("#agent-tabs .sub-tab"))) {
+      for (const b of Array.from(
+        document.querySelectorAll("#agent-tabs .sub-tab:not(.flagged-toggle)"),
+      )) {
         b.classList.toggle("active", b === btn);
       }
       allRuns = [];
@@ -213,6 +223,13 @@ function setupPrompts(): void {
   }
   promptsLoadMoreBtn.addEventListener("click", () => {
     requestPromptLogs(allRuns.length);
+  });
+  const flaggedToggle = document.getElementById("prompts-flagged-toggle");
+  flaggedToggle?.addEventListener("click", () => {
+    flaggedOnly = !flaggedOnly;
+    flaggedToggle.classList.toggle("active", flaggedOnly);
+    allRuns = [];
+    requestPromptLogs(0);
   });
   const search = document.getElementById("prompts-search") as HTMLInputElement | null;
   if (search) {
@@ -243,6 +260,7 @@ function requestPromptLogs(offset: number): void {
     agent_name: agentName,
     offset,
     query: promptSearch || undefined,
+    flagged_only: flaggedOnly || undefined,
   });
 }
 
@@ -273,8 +291,8 @@ function updateExistingRun(run: PromptLogRun, prompt: PromptLogEntry): void {
   const newHeader = createRunHeader(run);
   summary.replaceChild(newHeader, oldHeader);
 
-  const promptsContainer = row.querySelector(".run-prompts")!;
-  promptsContainer.appendChild(createPromptRow(prompt, run.prompts.length));
+  const promptsPanel = row.querySelector(".run-view-prompts") ?? row.querySelector(".run-prompts")!;
+  promptsPanel.appendChild(createPromptRow(prompt, run.prompts.length));
 
   markRunActive(run.run_id, row);
 }
@@ -292,6 +310,10 @@ function insertNewRun(prompt: PromptLogEntry & { run_id: string }): void {
     run_outcome: null,
     run_reason: null,
     run_target: prompt.run_target ?? null,
+    // A live, mid-flight run has no completed-run health/record yet — they're
+    // computed once the run is tagged and re-fetched.  Empty until then.
+    health: { bailed: false, incomplete: false, tool_failures: 0, degenerate_send: false, flags: [], regressive: false },
+    record: "",
     prompts: [prompt],
   };
   allRuns.unshift(run);
@@ -415,14 +437,11 @@ function createRunRow(run: PromptLogRun): HTMLElement {
     );
   }
 
-  row.appendChild(summary);
+  const badges = createHealthBadges(run.health);
+  if (badges) summary.appendChild(badges);
 
-  const promptsContainer = document.createElement("div");
-  promptsContainer.className = "run-prompts";
-  for (let i = 0; i < run.prompts.length; i++) {
-    promptsContainer.appendChild(createPromptRow(run.prompts[i], i + 1));
-  }
-  row.appendChild(promptsContainer);
+  row.appendChild(summary);
+  row.appendChild(createRunBody(run));
 
   summary.addEventListener("click", () => {
     row.classList.toggle("expanded");
@@ -458,6 +477,181 @@ function createRunOutcome(
   el.textContent = target ? `[${target}] ${text}` : text;
   return el;
 }
+
+// The expanded body of a run: the interactive turn-based "Prompts" view, plus —
+// for a completed collector run — a "Record" tab showing the concise textual
+// record, the SAME representation Penny's quality collector reads of this run.
+function createRunBody(run: PromptLogRun): HTMLElement {
+  const body = document.createElement("div");
+  body.className = "run-prompts";
+
+  const prompts = document.createElement("div");
+  prompts.className = "run-view run-view-prompts active";
+  for (let i = 0; i < run.prompts.length; i++) {
+    prompts.appendChild(createPromptRow(run.prompts[i], i + 1));
+  }
+
+  // The record is only meaningful once the run is tagged (a completed collector
+  // run); a live / chat run has no Penny-facing record, so it shows prompts only.
+  if (!run.record || run.run_outcome === null) {
+    body.appendChild(prompts);
+    return body;
+  }
+
+  const record = createRecordView(run.record);
+  body.appendChild(createRunViewTabs(prompts, record));
+  body.appendChild(prompts);
+  body.appendChild(record);
+  return body;
+}
+
+// A "Prompts | Record" tab bar that swaps which view panel is active.
+function createRunViewTabs(promptsPanel: HTMLElement, recordPanel: HTMLElement): HTMLElement {
+  const bar = document.createElement("div");
+  bar.className = "run-view-tabs";
+  const makeTab = (label: string, panel: HTMLElement, active: boolean): HTMLButtonElement => {
+    const tab = document.createElement("button");
+    tab.className = active ? "sub-tab active" : "sub-tab";
+    tab.textContent = label;
+    tab.addEventListener("click", () => {
+      for (const other of Array.from(bar.querySelectorAll(".sub-tab"))) {
+        other.classList.remove("active");
+      }
+      tab.classList.add("active");
+      promptsPanel.classList.toggle("active", panel === promptsPanel);
+      recordPanel.classList.toggle("active", panel === recordPanel);
+    });
+    return tab;
+  };
+  bar.appendChild(makeTab("Prompts", promptsPanel, true));
+  bar.appendChild(makeTab("Record", recordPanel, false));
+  return bar;
+}
+
+// The concise textual run record, rendered as a syntax-highlighted code listing:
+// a light editor background, a line-number gutter, the header + ⚠ flags as
+// comment-style lines, and each tool call tokenised like code.  The copy button
+// still grabs the raw record verbatim (what Penny's quality collector reads).
+// All content goes in via textContent — never innerHTML — since it's model output.
+function createRecordView(record: string): HTMLElement {
+  const view = document.createElement("div");
+  view.className = "run-view run-view-record";
+  view.appendChild(createCopyButton(() => record, "Copy the run record"));
+
+  const code = document.createElement("div");
+  code.className = "record-code";
+  const lines = record.split("\n").filter((line) => line.length > 0);
+  lines.forEach((line, index) => code.appendChild(createCodeLine(index + 1, line, index === 0)));
+  view.appendChild(code);
+  return view;
+}
+
+function createCodeLine(lineNumber: number, line: string, isHeader: boolean): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "record-line";
+
+  const gutter = document.createElement("span");
+  gutter.className = "record-ln";
+  gutter.textContent = String(lineNumber);
+  row.appendChild(gutter);
+
+  const code = document.createElement("span");
+  code.className = "record-src";
+  if (line.startsWith("⚠")) {
+    const capacity = /^⚠\s*(INCOMPLETE|TOOL FAILURES)/.test(line);
+    row.classList.add(capacity ? "record-line-capacity" : "record-line-flag");
+    code.textContent = line;
+  } else if (isHeader) {
+    row.classList.add("record-line-header");
+    code.textContent = line;
+  } else {
+    highlightCall(line, code);
+  }
+  row.appendChild(code);
+  return row;
+}
+
+// Tokenise one rendered tool call (e.g. ``write(games, "Ark Nova 2")``) and
+// append a coloured span per token.  Identifiers are classified by what follows:
+// ``name(`` is a function, ``name=`` a keyword arg.
+function highlightCall(line: string, into: HTMLElement): void {
+  const tokenRe =
+    /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\d+(?:\.\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|(.)/g;
+  type Token = { text: string; type: string };
+  const tokens: Token[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tokenRe.exec(line)) !== null) {
+    if (match[1]) tokens.push({ text: match[1], type: "str" });
+    else if (match[2]) tokens.push({ text: match[2], type: "num" });
+    else if (match[3]) tokens.push({ text: match[3], type: "ident" });
+    else if (match[4]) tokens.push({ text: match[4], type: "space" });
+    else tokens.push({ text: match[5], type: "punct" });
+  }
+  const nextNonSpace = (from: number): string => {
+    for (let i = from + 1; i < tokens.length; i++) {
+      if (tokens[i].type !== "space") return tokens[i].text;
+    }
+    return "";
+  };
+  tokens.forEach((token, index) => {
+    if (token.type === "ident") {
+      if (token.text === "True" || token.text === "False" || token.text === "None") {
+        token.type = "kw";
+      } else if (nextNonSpace(index) === "(") token.type = "fn";
+      else if (nextNonSpace(index) === "=") token.type = "key";
+    }
+    const span = document.createElement("span");
+    span.className = `tok-${token.type}`;
+    span.textContent = token.text;
+    into.appendChild(span);
+  });
+}
+
+const RUN_HEALTH_LABEL: Record<RunHealthFlag, string> = {
+  no_work_done: "no work done",
+  incomplete: "incomplete",
+  tool_failures: "tool failures",
+  half_formed_send: "half-formed send",
+};
+
+// One chip per set health flag — the compact form of the same RunHealth the
+// concise record renders verbatim.  Returns null for a healthy run (no chrome).
+function createHealthBadges(health: RunHealth | undefined): HTMLElement | null {
+  if (!health || health.flags.length === 0) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "run-health";
+  for (const flag of health.flags) {
+    const chip = document.createElement("span");
+    chip.className = `run-health-flag run-health-${flag}`;
+    const count = flag === "tool_failures" && health.tool_failures > 1 ? ` (${health.tool_failures})` : "";
+    chip.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${RUN_HEALTH_LABEL[flag]}${count}`;
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+// A small copy button that copies the JSON returned by ``getText`` to the
+// clipboard.  ``getText`` is a thunk so the (sometimes large) payload is only
+// serialized on click.  Clicking never toggles the surrounding row (stops
+// propagation), and the icon flips to a check briefly on success.
+function createCopyButton(getText: () => string, title: string): HTMLButtonElement {
+  const copy = document.createElement("button");
+  copy.className = "copy-btn";
+  copy.title = title;
+  copy.innerHTML = '<i class="fa-solid fa-copy"></i>';
+  copy.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(getText()).then(() => {
+      copy.innerHTML = '<i class="fa-solid fa-check"></i>';
+      window.setTimeout(() => {
+        copy.innerHTML = '<i class="fa-solid fa-copy"></i>';
+      }, 1500);
+    });
+  });
+  return copy;
+}
+
+const jsonOf = (value: unknown): string => JSON.stringify(value, null, 2);
 
 function createRunHeader(run: PromptLogRun): HTMLElement {
   const header = document.createElement("div");
@@ -505,6 +699,15 @@ function createRunHeader(run: PromptLogRun): HTMLElement {
     `<span><i class="fa-solid fa-clock"></i>${formatDuration(run.total_duration_ms)}</span>`;
   header.appendChild(meta);
 
+  // Copy the whole run — its run_id + every prompt's full JSON (ids included) —
+  // so it can be pasted back for a deep look or looked up in the DB by run_id.
+  header.appendChild(
+    createCopyButton(
+      () => jsonOf({ run_id: run.run_id, prompts: run.prompts }),
+      `Copy all ${run.prompt_count} prompts as JSON (run_id ${run.run_id})`,
+    ),
+  );
+
   return header;
 }
 
@@ -549,6 +752,12 @@ function createPromptRow(prompt: PromptLogEntry, step: number): HTMLElement {
     `<span><i class="fa-solid fa-clock"></i>${formatDuration(prompt.duration_ms)}</span>`;
   header.appendChild(meta);
 
+  // Copy just this prompt's full JSON — its ``id`` is the promptlog row id, so
+  // it can be looked up directly in the DB.
+  header.appendChild(
+    createCopyButton(() => jsonOf(prompt), `Copy this prompt as JSON (promptlog id ${prompt.id})`),
+  );
+
   row.appendChild(header);
 
   const detail = createPromptDetail(prompt);
@@ -565,29 +774,61 @@ function createPromptDetail(prompt: PromptLogEntry): HTMLElement {
   const detail = document.createElement("div");
   detail.className = "prompt-detail";
 
+  // Each turn (one message in this prompt's input) gets a copy button that
+  // copies just that turn's JSON, tagged with the promptlog id for lookup.
   for (const message of prompt.messages) {
     const role = String(message.role ?? "unknown");
     const content = extractMessageContent(message);
-    detail.appendChild(createPromptSection(role, content));
+    detail.appendChild(
+      createPromptSection(role, content, () => jsonOf({ promptlog_id: prompt.id, turn: message })),
+    );
   }
 
   if (prompt.thinking) {
-    detail.appendChild(createPromptSection("thinking", prompt.thinking));
+    detail.appendChild(
+      createPromptSection("thinking", prompt.thinking, () =>
+        jsonOf({ promptlog_id: prompt.id, thinking: prompt.thinking }),
+      ),
+    );
   }
 
-  detail.appendChild(createPromptSection("response", renderResponse(prompt.response)));
+  detail.appendChild(
+    createPromptSection("response", renderResponse(prompt.response), () =>
+      jsonOf({ promptlog_id: prompt.id, response: prompt.response }),
+    ),
+  );
 
   return detail;
 }
 
-function createPromptSection(label: string, content: string): HTMLElement {
+function createPromptSection(
+  label: string,
+  content: string,
+  copyValue?: () => string,
+): HTMLElement {
   const section = document.createElement("div");
   section.className = "prompt-section";
 
   const labelEl = document.createElement("div");
   labelEl.className = "prompt-section-label";
   labelEl.dataset.role = label.toLowerCase();
-  labelEl.innerHTML = `<i class="fa-solid fa-chevron-right section-toggle-icon"></i> ${label}`;
+
+  const role = document.createElement("span");
+  role.className = "prompt-section-role";
+  role.innerHTML = `<i class="fa-solid fa-chevron-right section-toggle-icon"></i> ${label}`;
+  labelEl.appendChild(role);
+
+  // A one-line preview of the turn's content, so the whole prompt is scannable
+  // while collapsed.  CSS ellipsis trims it to fit — no hardcoded cutoff.  Hidden
+  // once the section is expanded (the full content shows below).
+  const preview = document.createElement("span");
+  preview.className = "prompt-section-preview";
+  preview.textContent = sectionPreview(content);
+  labelEl.appendChild(preview);
+
+  if (copyValue) {
+    labelEl.appendChild(createCopyButton(copyValue, `Copy this ${label} as JSON`));
+  }
   section.appendChild(labelEl);
 
   const contentEl = document.createElement("div");
@@ -600,6 +841,13 @@ function createPromptSection(label: string, content: string): HTMLElement {
   });
 
   return section;
+}
+
+// A single-line preview of a turn's content: whitespace/newlines collapsed to
+// spaces; an empty turn shows ``""`` so it's still legible.
+function sectionPreview(content: string): string {
+  const flat = content.replace(/\s+/g, " ").trim();
+  return flat.length > 0 ? flat : '""';
 }
 
 function extractMessageContent(message: Record<string, unknown>): string {

@@ -13,7 +13,10 @@ from penny.database.memory.objects import (
     Log,
     Memory,
     MessageLogMemory,
+    RunHealth,
     RunLog,
+    classify_run,
+    render_run_record,
     render_tool_call,
 )
 from penny.database.memory.store import MemoryStore
@@ -59,7 +62,10 @@ __all__ = [
     "MoveOutcome",
     "ReadOnlyMemoryError",
     "RecallMode",
+    "RunHealth",
     "RunLog",
+    "classify_run",
+    "render_run_record",
     "render_tool_call",
     "UpdateOutcome",
     "WriteOutcome",

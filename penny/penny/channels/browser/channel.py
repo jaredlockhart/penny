@@ -536,13 +536,20 @@ class BrowserChannel(MessageChannel):
         agent_name = data.get("agent_name") or None
         offset = int(data.get("offset", 0))
         query = (data.get("query") or "").strip() or None
+        flagged_only = bool(data.get("flagged_only", False))
         runs = self._db.messages.get_prompt_log_runs(
-            limit=self._PROMPT_LOG_PAGE_SIZE, offset=offset, agent_name=agent_name, query=query
+            limit=self._PROMPT_LOG_PAGE_SIZE,
+            offset=offset,
+            agent_name=agent_name,
+            query=query,
+            flagged_only=flagged_only,
         )
         response = {
             "type": BROWSER_RESP_TYPE_PROMPT_LOGS,
             "runs": runs,
-            "has_more": len(runs) == self._PROMPT_LOG_PAGE_SIZE,
+            # Flagged-only is a single-shot view of the recent-runs window — it
+            # returns every flagged run at once, so there's no further page.
+            "has_more": (not flagged_only) and len(runs) == self._PROMPT_LOG_PAGE_SIZE,
         }
         with contextlib.suppress(websockets.ConnectionClosed):
             await ws.send(json.dumps(response))

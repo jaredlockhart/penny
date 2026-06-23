@@ -7,11 +7,12 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import func, text
+from sqlalchemy import bindparam, func, text
 from sqlmodel import Session, select
 
 from penny.agents.models import MessageRole
 from penny.constants import PennyConstants
+from penny.database.memory.objects import classify_run, render_run_record
 from penny.database.models import CommandLog, MessageLog, PromptLog
 
 logger = logging.getLogger(__name__)
@@ -513,11 +514,16 @@ class MessageStore:
         run_id: str,
         outcome: str,
         reason: str,
+        tool_failures: int = 0,
     ) -> None:
         """Set the run outcome (a ``RunOutcome`` value + reason) on the last
         prompt log row for ``run_id``.  Drives the outcome badge on the prompts
         tab.  The run's ``run_target`` is stamped on every prompt at write time
-        (see ``log_prompt``), so it isn't set here."""
+        (see ``log_prompt``), so it isn't set here.
+
+        ``tool_failures`` is the run's count of failed tool calls, stamped on the
+        same last row so the run-health classifier can read it structurally
+        rather than parsing tool-result text."""
         try:
             with self._session() as session:
                 last_prompt = session.exec(
@@ -529,6 +535,7 @@ class MessageStore:
                 if last_prompt:
                     last_prompt.run_outcome = outcome
                     last_prompt.run_reason = reason
+                    last_prompt.tool_failures = tool_failures
                     session.add(last_prompt)
                     session.commit()
                     if self._on_run_outcome_set:
@@ -542,6 +549,7 @@ class MessageStore:
         offset: int = 0,
         agent_name: str | None = None,
         query: str | None = None,
+        flagged_only: bool = False,
     ) -> list[dict]:
         """Get prompt logs grouped by run_id, newest first.
 
@@ -555,29 +563,100 @@ class MessageStore:
         ``query`` filters to runs that have at least one prompt whose
         ``response`` or ``thinking`` (the output the run produced — not its
         shared input scaffolding) matches the text.
+
+        ``flagged_only`` keeps only runs the run-health classifier marks
+        regressive (a bail / incomplete / tool-failure / half-formed send),
+        paging over that filtered stream — ``offset`` then counts flagged runs,
+        matching the addon's offset-by-displayed-count model.
         """
         with self._session() as session:
+            if flagged_only:
+                return self._flagged_runs(session, agent_name, query)
             run_ids_ordered = self._page_of_run_ids(session, limit, offset, agent_name, query)
-            if not run_ids_ordered:
-                return []
+            return self._runs_for(session, run_ids_ordered)
 
-            grouped: dict[str, list[PromptLog]] = {}
-            prompts = session.exec(
-                select(PromptLog)
-                .where(PromptLog.run_id.in_(run_ids_ordered))  # ty: ignore[unresolved-attribute]
-                .order_by(PromptLog.timestamp.asc())
-            ).all()
-            for prompt in prompts:
-                if prompt.run_id is None:
-                    continue
-                grouped.setdefault(prompt.run_id, []).append(prompt)
+    def _runs_for(self, session: Session, run_ids_ordered: list[str]) -> list[dict]:
+        """Load + serialize the given runs (heavy prompt rows), preserving order."""
+        if not run_ids_ordered:
+            return []
+        grouped: dict[str, list[PromptLog]] = {}
+        prompts = session.exec(
+            select(PromptLog)
+            .where(PromptLog.run_id.in_(run_ids_ordered))  # ty: ignore[unresolved-attribute]
+            .order_by(PromptLog.timestamp.asc())
+        ).all()
+        for prompt in prompts:
+            if prompt.run_id is None:
+                continue
+            grouped.setdefault(prompt.run_id, []).append(prompt)
+        runs = []
+        for run_id in run_ids_ordered:
+            run_prompts = grouped[run_id]
+            total_duration_ms = sum(p.duration_ms or 0 for p in run_prompts)
+            runs.append(self._serialize_run(run_id, run_prompts, total_duration_ms))
+        return runs
 
-            runs = []
-            for run_id in run_ids_ordered:
-                run_prompts = grouped[run_id]
-                total_duration_ms = sum(p.duration_ms or 0 for p in run_prompts)
-                runs.append(self._serialize_run(run_id, run_prompts, total_duration_ms))
-            return runs
+    # The flagged-only triage is a view of RECENT regressions, so it scans a
+    # bounded window of the newest runs rather than the whole multi-GB history.
+    # Classification reads only light columns (no messages/thinking), so this
+    # window is cheap to sweep; the window comfortably covers many days of runs.
+    _FLAGGED_SCAN_RUNS = 1000
+    _FLAGGED_SCAN_PAGE = 200
+
+    def _flagged_runs(
+        self,
+        session: Session,
+        agent_name: str | None,
+        query: str | None,
+    ) -> list[dict]:
+        """Every regressive run in the recent-runs window, newest-first.
+
+        Sweeps the newest ``_FLAGGED_SCAN_RUNS`` runs, classifying each from a
+        LIGHT column read (no ``messages``/``thinking`` — the heavy fields), then
+        heavy-serializes only the flagged ones.  Single-shot (no pagination): a
+        triage of recent regressions, not a page into all history."""
+        flagged_ids: list[str] = []
+        scanned = 0
+        while scanned < self._FLAGGED_SCAN_RUNS:
+            run_ids = self._page_of_run_ids(
+                session, self._FLAGGED_SCAN_PAGE, scanned, agent_name, query
+            )
+            if not run_ids:
+                break
+            flagged_ids.extend(self._regressive_among(session, run_ids))
+            scanned += len(run_ids)
+            if len(run_ids) < self._FLAGGED_SCAN_PAGE:
+                break
+        return self._runs_for(session, flagged_ids)
+
+    @staticmethod
+    def _regressive_among(session: Session, run_ids: list[str]) -> list[str]:
+        """The subset of ``run_ids`` whose run is regressive, in input order.
+
+        Classifies from the LIGHT columns only — the run's tool calls
+        (``response``) plus the ``run_outcome``/``tool_failures`` the classifier's
+        boolean flags read — so the flagged sweep never loads the heavy
+        ``messages`` scaffolding.  Order within a run is irrelevant to the flags
+        (bail = any non-done call; degenerate = any bad send; the outcome and
+        failure count sit on a single row), so no ``ORDER BY`` is needed."""
+        sql = text(
+            "SELECT run_id, response, run_outcome, tool_failures "
+            "FROM promptlog WHERE run_id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True))
+        grouped: dict[str, list[PromptLog]] = {}
+        for run_id, response, run_outcome, tool_failures in session.execute(
+            sql, {"ids": run_ids}
+        ).all():
+            light = PromptLog(
+                model="",
+                messages="",
+                response=response or "",
+                run_id=run_id,
+                run_outcome=run_outcome,
+                tool_failures=tool_failures,
+            )
+            grouped.setdefault(run_id, []).append(light)
+        return [run_id for run_id in run_ids if classify_run(grouped.get(run_id, [])).regressive]
 
     @staticmethod
     def _page_of_run_ids(
@@ -734,6 +813,11 @@ class MessageStore:
         # rendered the bare agent identity ("collector") instead of the name.
         run_target = prompts[0].run_target
 
+        # Run health + concise record: the SAME representation Penny's quality
+        # collector reads of her own runs (render_run_record / classify_run), so
+        # the addon's badges + "flagged only" filter and Penny's self-review draw
+        # from one classifier.  ``record`` is copy-pasteable straight back to a
+        # deeper analysis.
         return {
             "run_id": run_id,
             "agent_name": prompts[0].agent_name or "unknown",
@@ -746,5 +830,7 @@ class MessageStore:
             "run_outcome": run_outcome,
             "run_reason": run_reason,
             "run_target": run_target,
+            "health": classify_run(prompts).model_dump(),
+            "record": render_run_record(prompts),
             "prompts": serialized_prompts,
         }
