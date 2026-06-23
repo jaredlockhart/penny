@@ -650,7 +650,9 @@ class MessageStore:
             light = PromptLog(
                 model="",
                 messages="",
-                response=response or "",
+                # A NULL response (no model reply logged) means no tool calls —
+                # classify_run reads "" as an empty call set, which is correct.
+                response=response if response is not None else "",
                 run_id=run_id,
                 run_outcome=run_outcome,
                 tool_failures=tool_failures,

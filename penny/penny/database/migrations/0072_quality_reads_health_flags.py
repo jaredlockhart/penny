@@ -88,6 +88,11 @@ Only act on `⚠ NO WORK DONE` (tier 0), `⚠ HALF-FORMED SEND` (tier 1), or a c
 contradiction between behaviour and intent (tier 1) — otherwise change nothing.  \
 Never weaken an intent to excuse a prompt."""
 
+# A deliberately FROZEN copy of the run-record markers (the runtime source is
+# ``_MARK_*`` in database/memory/objects.py).  A migration must stay self-contained
+# — it can't import a runtime constant that may change under it — so this asserts
+# the prompt this migration ships names the flags it must act on; the two are
+# kept in lockstep by hand, and the eval contracts catch any real drift.
 _MARKERS = ["⚠ HALF-FORMED SEND", "⚠ INCOMPLETE", "⚠ TOOL FAILURES"]
 
 

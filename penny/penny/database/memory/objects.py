@@ -42,7 +42,7 @@ from pydantic import BaseModel, computed_field
 from sqlmodel import Session, select
 
 from penny.config_params import RuntimeParams
-from penny.constants import PennyConstants, RunOutcome
+from penny.constants import PennyConstants, RunHealthFlag, RunOutcome
 from penny.database.memory import _similarity as sim
 from penny.database.memory.types import (
     DedupThresholds,
@@ -795,13 +795,13 @@ class RunHealth(BaseModel):
         """Stable flag keys for badges / filtering, in render order."""
         out: list[str] = []
         if self.bailed:
-            out.append("no_work_done")
+            out.append(RunHealthFlag.NO_WORK_DONE.value)
         if self.incomplete:
-            out.append("incomplete")
+            out.append(RunHealthFlag.INCOMPLETE.value)
         if self.tool_failures:
-            out.append("tool_failures")
+            out.append(RunHealthFlag.TOOL_FAILURES.value)
         if self.degenerate_send:
-            out.append("half_formed_send")
+            out.append(RunHealthFlag.HALF_FORMED_SEND.value)
         return out
 
     @computed_field
@@ -837,6 +837,18 @@ def _send_content(args: object) -> str:
     return str(content) if content is not None else ""
 
 
+# The ``⚠`` marker that prefixes every run-health flag line, and the per-flag
+# markers built from it — the literal sentinels the ``quality`` collector reads
+# (and the addon's TS regex colours by).  Defined once so the render never spells
+# them inline; they must stay in lockstep with the markers the seeded ``quality``
+# prompt names (see migration 0072, which keeps its own frozen copies).
+HEALTH_MARKER = "⚠"
+_MARK_NO_WORK = f"{HEALTH_MARKER} NO WORK DONE"
+_MARK_INCOMPLETE = f"{HEALTH_MARKER} INCOMPLETE"
+_MARK_TOOL_FAILURES = f"{HEALTH_MARKER} TOOL FAILURES"
+_MARK_HALF_FORMED = f"{HEALTH_MARKER} HALF-FORMED SEND"
+
+
 def _health_lines(health: RunHealth) -> list[str]:
     """The ⚠ explanation lines for a run record, one per set flag, in order.
 
@@ -845,23 +857,23 @@ def _health_lines(health: RunHealth) -> list[str]:
     lines: list[str] = []
     if health.bailed:
         lines.append(
-            "⚠ NO WORK DONE — reached done() (or made no tool call) without any "
+            f"{_MARK_NO_WORK} — reached done() (or made no tool call) without any "
             "read/write/browse step first; the collector is not following its "
             "instructions"
         )
     if health.incomplete:
         lines.append(
-            "⚠ INCOMPLETE — hit the step ceiling without a closing done(); work "
+            f"{_MARK_INCOMPLETE} — hit the step ceiling without a closing done(); work "
             "landed but the cycle never finished cleanly"
         )
     if health.tool_failures:
         lines.append(
-            f"⚠ TOOL FAILURES ({health.tool_failures}) — a tool call returned an "
+            f"{_MARK_TOOL_FAILURES} ({health.tool_failures}) — a tool call returned an "
             "error and the run kept going"
         )
     if health.degenerate_send:
         lines.append(
-            "⚠ HALF-FORMED SEND — a message went out with no real content (empty, "
+            f"{_MARK_HALF_FORMED} — a message went out with no real content (empty, "
             "punctuation-only, or an unfinished fragment)"
         )
     return lines

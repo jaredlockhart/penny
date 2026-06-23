@@ -54,6 +54,17 @@ class RunOutcome(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RunHealthFlag(StrEnum):
+    """The structural run-health flags ``classify_run`` derives from a run's
+    promptlog rows — the machine-readable keys behind the addon badges and the
+    ``⚠`` lines in the run record (mirrored as a TS type for the addon)."""
+
+    NO_WORK_DONE = "no_work_done"
+    INCOMPLETE = "incomplete"
+    TOOL_FAILURES = "tool_failures"
+    HALF_FORMED_SEND = "half_formed_send"
+
+
 class ProgressEmoji(StrEnum):
     """Emojis used by ProgressTracker implementations to surface in-flight work.
 
