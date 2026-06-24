@@ -19,6 +19,7 @@ from penny.channels.base import PageContext
 from penny.constants import ChatPromptType, PennyConstants
 from penny.database.memory import Inclusion, Memory, RecallMode
 from penny.database.models import MemoryEntry
+from penny.datetime_utils import format_log_timestamp
 from penny.llm.models import LlmError
 from penny.prompts import Prompt
 from penny.responses import PennyResponse
@@ -439,7 +440,7 @@ class ChatAgent(Agent):
         """
         lines = [f"### {memory.name}", memory.description]
         for entry in entries:
-            timestamp = entry.created_at.strftime("%Y-%m-%d %H:%M")
+            timestamp = format_log_timestamp(entry.created_at)
             header = f"#### [{entry.key}] · {timestamp}" if entry.key else f"#### {timestamp}"
             lines.append("")
             lines.append(header)

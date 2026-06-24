@@ -38,6 +38,7 @@ from penny.database.memory import (
     WriteResult,
 )
 from penny.database.models import MemoryEntry, MemoryRow
+from penny.datetime_utils import format_log_timestamp
 from penny.llm.similarity import embed_text
 from penny.tools.base import Tool
 from penny.tools.memory_args import (
@@ -100,7 +101,8 @@ def _format_entries(
     lines = []
     for index, entry in enumerate(entries, start=1):
         prefix = f"[{entry.key}] " if entry.key else ""
-        lines.append(f"{index}. {prefix}{entry.content}")
+        stamp = f"[{format_log_timestamp(entry.created_at)}] "
+        lines.append(f"{index}. {stamp}{prefix}{entry.content}")
     body = "\n".join(lines)
     if source is None:
         return body
@@ -1326,7 +1328,10 @@ class ReadPublishedLatestTool(CursorReadTool):
         for index, item in enumerate(items, start=1):
             intent = f" (intent: {item.intent})" if item.intent else ""
             key = f"[{item.entry.key}] " if item.entry.key else ""
-            lines.append(f"{index}. from `{item.memory_name}`{intent}: {key}{item.entry.content}")
+            stamp = f"[{format_log_timestamp(item.entry.created_at)}] "
+            lines.append(
+                f"{index}. {stamp}from `{item.memory_name}`{intent}: {key}{item.entry.content}"
+            )
         noun = "entry" if len(items) == 1 else "entries"
         return f"{len(items)} new published {noun} (oldest first):\n" + "\n".join(lines)
 
