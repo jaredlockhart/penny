@@ -8,6 +8,7 @@ similarity reads and dedup have something to work with.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -388,6 +389,9 @@ class TestCollectionWritesAndReads:
         latest = await CollectionReadLatestTool(db).execute(memory="likes")
         assert "dark roast" in latest.message
         assert "cold brew" in latest.message
+        # Each rendered entry carries an absolute UTC timestamp so the model can
+        # place it in time — read-tool output was previously timeless.
+        assert re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\]", latest.message)
 
     @pytest.mark.asyncio
     async def test_write_reports_duplicate_via_tcr(self, tmp_path, mock_llm):

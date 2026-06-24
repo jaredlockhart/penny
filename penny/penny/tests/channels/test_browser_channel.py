@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -1360,7 +1361,7 @@ class TestBrowserPromptLogHandlers:
         # record (the SAME representation Penny's quality collector reads).
         assert runs["run1"]["health"]["regressive"] is False
         assert runs["run1"]["health"]["flags"] == []
-        assert runs["run1"]["record"].startswith("[board-games] wrote 2 new games")
+        assert _strip_ts(runs["run1"]["record"]).startswith("[board-games] wrote 2 new games")
 
     @pytest.mark.asyncio
     async def test_prompt_logs_flagged_only(self, tmp_path):
@@ -1530,6 +1531,13 @@ class TestBrowserPromptLogHandlers:
         assert received[0]["output_tokens"] == 20
 
 
+def _strip_ts(content: str) -> str:
+    """Strip the leading ``[YYYY-MM-DD HH:MM UTC] `` timestamp that run records and
+    log entries now carry, so assertions match the stable remainder without
+    freezing the clock."""
+    return re.sub(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\] ", "", content)
+
+
 def _seed_collector_run(db, run_target: str, run_id: str, outcome: str, reason: str) -> None:
     """Seed one completed promptlog run — ``collector-runs`` is a read facade
     over ``promptlog``, so the addon's run views come from there.  A worked run
@@ -1670,10 +1678,15 @@ class TestBrowserMemoryHandlers:
         assert resp["type"] == "memory_detail_response"
         assert resp["memory"]["name"] == "collector-runs"
         assert resp["memory"]["entry_count"] == 2
-        assert [e["content"] for e in resp["entries"]] == [
+        assert [_strip_ts(e["content"]) for e in resp["entries"]] == [
             "[knowledge] second",
             "[knowledge] first",
         ]
+        # Each record carries an absolute UTC timestamp the model can place in time.
+        assert all(
+            re.match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\] ", e["content"])
+            for e in resp["entries"]
+        )
         assert all(e["author"] == "collector" for e in resp["entries"])
         # Both sections fit in one page → no "load more".
         assert resp["entries_has_more"] is False
@@ -1708,7 +1721,7 @@ class TestBrowserMemoryHandlers:
         # DONE bail (which requires a recorded done() with no real work first).
         assert "[board-games] no source URL found" in runs[0]["content"]
         assert "⚠ INCOMPLETE" in runs[0]["content"]
-        assert runs[1]["content"] == "[board-games] wrote 2 games"
+        assert _strip_ts(runs[1]["content"]) == "[board-games] wrote 2 games"
         # Other-target run is excluded.
         assert all("other-target" not in r["content"] for r in runs)
         # Both target runs fit in one page.
@@ -1742,7 +1755,7 @@ class TestBrowserMemoryHandlers:
             {"type": "memory_detail_request", "name": "collector-runs"},
         )
         first = ws.sent[0]
-        assert [e["content"] for e in first["entries"]] == [
+        assert [_strip_ts(e["content"]) for e in first["entries"]] == [
             "[knowledge] third",
             "[knowledge] second",
         ]
@@ -1761,7 +1774,7 @@ class TestBrowserMemoryHandlers:
         page = ws.sent[0]
         assert page["type"] == "memory_page_response"
         assert page["section"] == "entries"
-        assert [e["content"] for e in page["entries"]] == ["[knowledge] first"]
+        assert [_strip_ts(e["content"]) for e in page["entries"]] == ["[knowledge] first"]
         assert page["has_more"] is False
 
     @pytest.mark.asyncio
@@ -1782,7 +1795,7 @@ class TestBrowserMemoryHandlers:
             {"type": "memory_detail_request", "name": "board-games"},
         )
         first = ws.sent[0]
-        assert [r["content"] for r in first["collector_runs"]] == [
+        assert [_strip_ts(r["content"]) for r in first["collector_runs"]] == [
             "[board-games] cycle-3",
             "[board-games] cycle-2",
         ]
@@ -1800,7 +1813,7 @@ class TestBrowserMemoryHandlers:
         )
         page = ws.sent[0]
         assert page["section"] == "collector_runs"
-        assert [r["content"] for r in page["entries"]] == ["[board-games] cycle-1"]
+        assert [_strip_ts(r["content"]) for r in page["entries"]] == ["[board-games] cycle-1"]
         assert page["has_more"] is False
 
     @pytest.mark.asyncio

@@ -59,6 +59,7 @@ from penny.database.memory.types import (
     slug,
 )
 from penny.database.models import MemoryEntry, MemoryRow, MessageLog, PromptLog
+from penny.datetime_utils import format_log_timestamp
 from penny.text_validity import degenerate_reason, half_formed_send_reason, is_low_info
 from penny.validation.conditions import ConditionKey, run_flag_conditions
 
@@ -913,7 +914,10 @@ def render_run_record(prompts: list[PromptLog]) -> str:
         return "[?] (no data)"
     health = classify_run(prompts)
     outcome, reason, target = _run_outcome(prompts)
-    header = f"[{target or '?'}] {reason or outcome or ''}".rstrip()
+    # The completion row (carrying the outcome) is the run's last prompt — its
+    # timestamp is when the run finished, so the model/quality can place it in time.
+    when = format_log_timestamp(prompts[-1].timestamp)
+    header = f"[{when}] [{target or '?'}] {reason or outcome or ''}".rstrip()
     lines = [header, *_health_lines(health)]
     calls = _run_tool_calls(prompts)
     non_done = [(name, args) for name, args in calls if name != "done"]

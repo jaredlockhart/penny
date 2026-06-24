@@ -175,13 +175,13 @@ corrects collection prompts that have drifted from their stated intent
 ### playlists
 favorite playlists
 
-#### [morning] · YYYY-MM-DD HH:MM
+#### [morning] · YYYY-MM-DD HH:MM UTC
 prog rock
 
 ### tips
 useful tips
 
-#### YYYY-MM-DD HH:MM
+#### YYYY-MM-DD HH:MM UTC
 tune before playing
 
 ## Instructions
