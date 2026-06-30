@@ -107,8 +107,15 @@ From the root `CLAUDE.md` and `docs/self-improvement-loop.md`:
    appear correctly on real failing runs, and do NOT appear on healthy ones.
    *(Do not commit any output — it contains real content.)*
 2. **`make eval` for the model-facing prompt changes** — phase 1's `done()`
-   guidance (committed ahead of its eval — a known gap) and phase 5's quality
-   prompt. Needs Ollama/oMLX up (gpt-oss:20b). Land the eval contract with the PR.
+   guidance: ✅ DONE — `tests/eval/test_collector_honesty.py` validates it live,
+   baseline (no phase 1) **0/3** → with phase-1 wording **3/3** (working-source guard
+   3/3); no wording iteration needed. Phase 5's quality prompt: still TODO with the PR.
+   *(P2/P3 non-regression also ✅: the six quality over-correction guards — `healthy`,
+   `incomplete`/`max-steps`/`tool-failure`/`run-failure`-not-drift, `quiet-when-healthy`
+   — all hold with the new rendering; the lone `quiet` 1/3 slip was flag-INDEPENDENT
+   over-correction, the failure the phase-5 suggest-not-apply pivot makes structurally
+   impossible.)* Needs Ollama up (gpt-oss:20b); **pause penny first** — it contends for
+   Ollama and turns a 47s case into 40+ min. Run cases one at a time.
 
 Tests are run ONLY via:
 `make fix check 2>&1 | tee /tmp/check-output.txt; echo "EXIT_CODE=$pipestatus[1]" >> /tmp/check-output.txt`
@@ -131,7 +138,7 @@ then read `/tmp/check-output.txt`. Never `make pytest` / `make check` alone /
 
 ## 5. The six phases
 
-### Phase 1 — Honest `done()` guidance  ✅ committed (needs eval, see §3)
+### Phase 1 — Honest `done()` guidance  ✅ committed + eval-validated (0/3→3/3, see §3)
 
 Model-facing backstop, attached structurally (runtime invariant, not via the
 prompt-writer). File: `penny/penny/agents/collector.py`, the `_RUNTIME_RULES`
@@ -261,6 +268,18 @@ Tests: an integration test that the tool returns recent records for a target
 
 ### Phase 5 — Quality prompt: reason over the pattern  ⬜ TODO (model-facing → eval)
 
+**DESIGN PIVOT (confirmed by the user, June 2026): quality SUGGESTS, never applies.**
+See `project_quality_collector_suggest_not_apply`. Quality recently made destructive
+edits to a healthy collection (the user paused it), and the `quiet-when-healthy` eval
+reproduced the same slip live (the model saw a clean run — no flags — and called
+`collection_update` on it anyway, unprompted). So quality is demoted from editor to
+**proposer**: it detects → composes a complete, specific edit *suggestion* as a message
+→ stops. The user approves ("yes, do it") and the **chat agent** makes the edit through
+its normal collection-edit tools. This removes the blast radius entirely (worst case =
+a wasted message) and is newly viable because the "messages weren't appearing in Penny's
+history" bug is fixed (the user must reliably SEE the suggestion). Phases 1–4 are
+unchanged — better detection feeds a better suggestion either way; only the *act* changes.
+
 A new migration (latest quality prompt is **0072**; do not edit it in place —
 add the next-numbered migration; run `make migrate-validate`). Rewrite the
 `quality` collector's `extraction_prompt` so its sequence is, in general terms:
@@ -270,15 +289,21 @@ add the next-numbered migration; run `make migrate-validate`). Rewrite the
 2. **Read that collector's own recent run history** (the phase-4 tool) — is the
    problem a one-off or a **consistent pattern across cycles**?
 3. If there's a persistent pattern that contradicts the collection's `intent`,
-   rewrite the offending `extraction_prompt` and apply it directly with
-   `collection_update`, then message the user (apply-then-notify). If it's a
-   one-off / capacity / transience, change nothing (quiet cycles are normal).
+   `send_message` a **complete, specific edit suggestion** (which collection, what's
+   wrong, the concrete change to make — enough that a "yes" is executable), then
+   `done()`. **Quality never calls `collection_update`.** If it's a one-off /
+   capacity / transience, change nothing (quiet cycles are normal).
 
 Constraints:
+- **Remove `collection_update` (and any entry-mutation tool) from quality's tool
+  surface** so the suggest-only contract is *structural*, not just prompted — the
+  model cannot apply even if it tries. This is the real fix for the over-correction
+  reproduced in `quiet-when-healthy`. (Quality keeps reads + `send_message` + `done`.)
 - **No hardcoded remedy.** Do NOT write "if NO WRITES, change the URL/search
   terms." Describe the *flag's meaning generally* (a tier keyed on the flag, like
   the existing tiers — gpt-oss responds well to numbered, one-shot-style prompts —
-  per `project_numbered_prompts_beat_prose`), then let the model diagnose and fix.
+  per `project_numbered_prompts_beat_prose`), then let the model diagnose and
+  *suggest* the fix.
 - Keep 0072's conservatism intact: `⚠ INCOMPLETE` / `⚠ TOOL FAILURES` and a
   `failed`/`cancelled` run that called real tools remain **ignored** as
   capacity/transience. `NO_WRITES` is the new **actionable** signal, but only when
@@ -286,25 +311,34 @@ Constraints:
 - Runtime invariants append structurally; only authoring rules go through the
   prompt; the catalog marker/detail strings are frozen — if you change them it's a
   coordinated migration + TS update.
+- The chat agent must be able to act on "yes, apply that" — it has the collection-edit
+  tools already; the work is making sure the approved suggestion carries enough to
+  execute from (and that the suggestion surfaces in history, now that it does).
 
 ### Phase 6 — Eval contract (do last, before landing)  ⬜ TODO (live model)
 
 Add to `penny/penny/tests/eval/test_quality_correction.py` a **pair** (the
-drift-N/quirk-N discipline used by PR #1276):
+drift-N/quirk-N discipline used by PR #1276) — scored on the **suggest-not-apply**
+contract:
 
 - **Drift case:** a collector whose browses fail across cycles and writes nothing
-  → quality detects the pattern and **changes the source/search approach** via
-  `collection_update`. Assert on persisted DB state (the `extraction_prompt`
-  changed), not wording. Use the `browse=` kwarg to install failing pages across
-  cycles.
+  → quality detects the pattern and **sends a specific, actionable edit suggestion**
+  (names the collection + the concrete change). Assert: a suggestion message was sent
+  AND **nothing was mutated** (the `extraction_prompt` is unchanged — quality has no
+  mutation tool). Score the message's *presence + specificity*, not its wording. Use
+  the `browse=` kwarg with `CannedPage(fails=True)` / `ALL_BROWSES_FAIL` to install
+  failing pages across cycles.
 - **Quirk / healthy guard:** a collector with a working source that reads fine and
-  writes → quality **leaves it alone** (no `collection_update`). This proves we
-  didn't reintroduce over-correction (the thing 0072 guarded against).
+  writes → quality **leaves it alone** (no suggestion, no mutation). This proves we
+  didn't reintroduce over-correction (the thing 0072 guarded against, and the slip
+  `quiet-when-healthy` showed is now structurally impossible without the edit tool).
 
 Validate with `make eval` (focused low-N first; read the thinking on failures;
 full suite once at the end). Also pair with a deterministic `tests/` mock test if
-there's a mechanism to pin. The phase-1 `done()` guidance should be covered by
-confirming the extractor cases don't regress under the new runtime rules.
+there's a mechanism to pin (e.g. assert quality's tool surface excludes
+`collection_update`). The phase-1 `done()` guidance is covered by
+`tests/eval/test_collector_honesty.py` (already validated 0/3→3/3) plus confirming
+the extractor cases don't regress under the new runtime rules.
 
 ---
 

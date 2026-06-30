@@ -12,14 +12,21 @@ synthetic suspect collection (its intent + a prompt) AND the ``promptlog`` run(s
 behind it — which IS the ``collector-runs`` content, no separate log to seed.
 There is no keyed ``log_get`` and no ``penny-messages`` read.
 
+Quality SUGGESTS, never applies (migration 0073): on real drift it ``send_message``s
+a fix suggestion (Observed / Proposed fix / a written-out numbered New prompt) and
+calls NO ``collection_update`` — the user approves and the chat agent makes the edit.
+So the corrective scorer asserts a suggestion was SENT (naming the collection, with a
+numbered new prompt) AND nothing was mutated; the leave-alone scorer asserts nothing
+sent AND nothing mutated.  ``collection_update`` being called at all is the failure.
+
   rebroadcast  — intent "one fresh thought, never repeat"; two runs re-send the
-                 same digest → rewrite the prompt (any material corrective change).
-  silent-drift — intent "never ping me"; a run sent an update → drop send_message.
-  healthy      — a run's behaviour matches intent → change nothing.
-  run-failure  — a ❌ run (max steps) is capacity, not drift → change nothing.
-  ends-with-done — a drift scenario must close the full read→fix→notify hop with done().
-  triage       — a batch of several collections must still converge on one fix (weakest path).
-  quiet        — a clean batch changes nothing AND stays off the channel (no self-leak).
+                 same digest → suggest a fix (don't apply it).
+  silent-drift — intent "never ping me"; a run sent an update → suggest dropping send.
+  healthy      — a run's behaviour matches intent → suggest nothing, mutate nothing.
+  run-failure  — a ❌ run (max steps) is capacity, not drift → leave it alone.
+  ends-with-done — a drift scenario must close the read→suggest hop with done().
+  triage       — a batch of several collections must still converge on one suggestion.
+  quiet        — a clean batch suggests nothing AND stays off the channel (no self-leak).
 
 Sends are observed off ``db.send_queue`` (a collector cycle enqueues; the drainer
 that delivers to the channel doesn't run inside ``run_for``) — see ``collector_eval``.
@@ -28,7 +35,6 @@ that delivers to the channel doesn't run inside ``run_for``) — see ``collector
 from __future__ import annotations
 
 import json
-from typing import cast
 
 import pytest
 
@@ -92,6 +98,19 @@ _NEWS_NOTIFY_PROMPT = (
 )
 
 
+def _browse_fail_turns(errors: int) -> list[dict]:
+    """Tool-result turns carrying ``errors`` browse-error sections — the
+    ``## browse error:`` headers the run-health tally counts to flag ``⚠ NO
+    WRITES`` (a browse failed AND the run wrote nothing).  Mirrors the run's
+    final-prompt conversation, where the browse tool's result lands."""
+    content = PennyConstants.SECTION_SEPARATOR.join(
+        f"{PennyConstants.BROWSE_ERROR_HEADER}https://news.example.test/{index}\n"
+        "Could not read this page"
+        for index in range(errors)
+    )
+    return [{"role": "tool", "tool_call_id": "b", "content": content}]
+
+
 def _seed_run(
     db: Database,
     *,
@@ -101,6 +120,7 @@ def _seed_run(
     summary: str,
     calls: list[tuple[str, dict]],
     tool_failures: int = 0,
+    messages: list[dict] | None = None,
 ) -> None:
     """Seed one collector run as a ``promptlog`` row (+ its outcome).
 
@@ -108,6 +128,9 @@ def _seed_run(
     record when the quality cycle calls ``log_read("collector-runs")``.  The
     response carries the run's tool calls (what it actually did) and
     ``set_run_outcome`` stamps the target/outcome/summary the record header uses.
+    ``messages`` is the run's conversation (the final prompt's turns) — pass
+    browse-error turns (``_browse_fail_turns``) so the run-health tally can flag
+    ``⚠ NO WRITES``; defaults to empty (no browse activity).
     """
     response = {
         "choices": [
@@ -130,7 +153,7 @@ def _seed_run(
     }
     db.messages.log_prompt(
         model="seed",
-        messages=[],
+        messages=messages or [],
         response=response,
         agent_name="collector",
         run_id=run_id,
@@ -168,62 +191,67 @@ def _snapshot(suspect: str):
     return _take
 
 
-def _score_update(suspect: str, forbidden: str | None) -> CollectorScorer:
+def _applied_an_edit(db: Database) -> bool:
+    """Quality must SUGGEST, never apply (migration 0073).  ``collection_update``
+    is the apply tool — calling it at all, on ANY collection, breaks the
+    suggest-only contract.  The sharpest, collection-agnostic 'it mutated' signal,
+    and the gate that would catch a regression to self-applying."""
+    return tool_was_called(db, "collection_update")
+
+
+def _names_collection(sent: list[str], name: str) -> bool:
+    """Did any sent message name this collection — is the suggestion specific
+    enough for the user to act on?"""
+    return any(name in message for message in sent)
+
+
+def _score_suggests(suspect: str) -> CollectorScorer:
+    """Drift → quality SENDS a fix suggestion and APPLIES NOTHING.  The user
+    approves; the chat agent edits.  This is the suggest-not-apply contract
+    (migration 0073) — it replaces the old apply-then-notify scorer that asserted
+    the extraction_prompt changed.  The suggestion must be approve-as-is: it names
+    the collection AND writes out a complete new prompt as a numbered recipe (the
+    user-requested Observed / Proposed fix / New prompt shape — we score the two
+    machine-checkable parts: the named collection and the numbered new prompt)."""
+
     def _score(db: Database, before: object, sent: list[str]) -> list[str]:
-        original = cast(str, before)
-        memory = db.memories.get(suspect)
-        new_prompt = (memory.extraction_prompt or "") if memory else ""
-        fails = []
-        if new_prompt == original:
-            fails.append(f"did not change {suspect!r}'s extraction_prompt")
-        elif forbidden is not None and forbidden in new_prompt:
-            fails.append(f"corrected prompt still contains the offending {forbidden!r} step")
-        elif len(new_prompt) < 80:
-            fails.append(f"corrected prompt looks gutted ({len(new_prompt)} chars)")
+        fails: list[str] = []
+        if _applied_an_edit(db):
+            fails.append("called collection_update — quality must suggest, not apply")
         if not sent:
-            fails.append("did not message the user about the change")
+            fails.append("did not send a fix suggestion to the user")
+            return fails
+        if not _names_collection(sent, suspect):
+            fails.append(f"suggestion did not name the {suspect!r} collection (not actionable)")
+        if not any(looks_numbered(message) for message in sent):
+            fails.append("suggestion did not write out a numbered new prompt to approve")
         return fails
 
     return _score
 
 
-def _score_rewrote_numbered(suspect: str) -> CollectorScorer:
-    """Format enforcement: a prose extraction_prompt must be rewritten as a NUMBERED
-    instruction/tool-call list (apply + notify) — numbered recipes are followed far
-    more reliably than prose, so the correction must not stay prose."""
+def _score_healthy(suspect: str) -> CollectorScorer:
+    """Healthy / quiet → quality MUTATES NOTHING and SENDS NOTHING.  An applied
+    edit is the over-correction suggest-only exists to prevent; a needless message
+    spams the user about a working collector.  Folds the old _score_no_op +
+    _score_quiet — under suggest-only both reduce to 'silent + unchanged'."""
 
     def _score(db: Database, before: object, sent: list[str]) -> list[str]:
-        original = cast(str, before)
-        memory = db.memories.get(suspect)
-        new_prompt = (memory.extraction_prompt or "") if memory else ""
-        fails = []
-        if new_prompt == original:
-            fails.append(f"did not rewrite {suspect!r}'s prose extraction_prompt")
-        elif not looks_numbered(new_prompt):
-            fails.append("rewrote the prompt but the result is still not a numbered list")
-        if not sent:
-            fails.append("did not message the user about the change")
+        fails: list[str] = []
+        if _applied_an_edit(db):
+            fails.append(f"called collection_update on a healthy collection ({suspect!r})")
+        if sent:
+            fails.append(f"sent a needless suggestion on a healthy/quiet batch: {sent!r}")
         return fails
-
-    return _score
-
-
-def _score_no_op(suspect: str) -> CollectorScorer:
-    def _score(db: Database, before: object, sent: list[str]) -> list[str]:
-        original = cast(str, before)
-        memory = db.memories.get(suspect)
-        new_prompt = (memory.extraction_prompt or "") if memory else ""
-        if new_prompt != original:
-            return [f"over-corrected a healthy collection ({suspect!r})"]
-        return []
 
     return _score
 
 
 def _score_called_done(db: Database, before: object, sent: list[str]) -> list[str]:
     """Done-discipline: the cycle must end by calling ``done()`` — whether it
-    fixed something or gave up — never trail off with plain text.  Recreates the
-    prod give-up (run e5a7c9e3 returned a text blob and never called done())."""
+    sent a suggestion or found nothing — never trail off with plain text.
+    Recreates the prod give-up (a run returned a text blob and never called
+    done())."""
     if not tool_was_called(db, "done"):
         return ["cycle ended without calling done() — gave up with plain text"]
     return []
@@ -266,55 +294,27 @@ def _snapshot_many(names: list[str]):
 
 def _score_triage(drifted: list[str], healthy: list[str]) -> CollectorScorer:
     """Convergence under load: given a batch of collections to triage, the cycle
-    must (a) close with ``done()`` and (b) actually land a fix on at least one
-    drifted collection — and not touch a healthy one.
+    must (a) close with ``done()``, (b) SEND a suggestion naming at least one
+    drifted collection, (c) apply NOTHING (no collection_update), and (d) not
+    suggest about a healthy one.
 
-    Recreates a production non-convergence: faced with
-    several collections, the model grazed ``memory_metadata`` across all of them,
-    filled its context with "looks fine", and trailed off with text — fixing
-    nothing.  One-drift-per-cycle should make it pick the worst and land it.
+    Recreates a production non-convergence: faced with several collections, the
+    model grazed ``memory_metadata`` across all of them, filled its context with
+    "looks fine", and trailed off with text — suggesting nothing.  One-suggestion-
+    per-cycle should make it pick the worst and write it up.
     """
 
     def _score(db: Database, before: object, sent: list[str]) -> list[str]:
-        prompts = cast(dict, before)
         fails: list[str] = []
         if not tool_was_called(db, "done"):
             fails.append("cycle ended without calling done() — gave up with plain text")
-        fixed = [name for name in drifted if _changed(db, name, prompts)]
-        if not fixed:
-            fails.append("fixed none of the drifted collections this cycle")
-        touched_healthy = [name for name in healthy if _changed(db, name, prompts)]
-        if touched_healthy:
-            fails.append(f"over-corrected healthy collection(s): {touched_healthy}")
-        return fails
-
-    return _score
-
-
-def _changed(db: Database, name: str, before: dict) -> bool:
-    memory = db.memories.get(name)
-    now = (memory.extraction_prompt or "") if memory else ""
-    return now != before.get(name, "")
-
-
-def _score_quiet(suspect: str) -> CollectorScorer:
-    """No self-leak on a quiet batch: when nothing drifted, the quality cycle
-    must change nothing AND stay silent — it is not a notifier.
-
-    Recreates a production self-leak: reviewing a notify collection, the
-    model read that collection's "reach out with one thought" prompt and acted it
-    out itself, sending the user an off-intent health fact.  ``_score_no_op`` only
-    guards the prompt; this also guards the channel."""
-
-    def _score(db: Database, before: object, sent: list[str]) -> list[str]:
-        original = cast(str, before)
-        memory = db.memories.get(suspect)
-        new_prompt = (memory.extraction_prompt or "") if memory else ""
-        fails: list[str] = []
-        if new_prompt != original:
-            fails.append(f"over-corrected a healthy collection ({suspect!r})")
-        if sent:
-            fails.append(f"sent the user a message on a quiet batch (self-leak): {sent!r}")
+        if _applied_an_edit(db):
+            fails.append("called collection_update — quality must suggest, not apply")
+        if not any(_names_collection(sent, name) for name in drifted):
+            fails.append("did not send a suggestion naming any drifted collection")
+        leaked = [name for name in healthy if _names_collection(sent, name)]
+        if leaked:
+            fails.append(f"suggested about healthy collection(s): {leaked}")
         return fails
 
     return _score
@@ -357,7 +357,7 @@ async def test_rebroadcast(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_update(suspect, forbidden=None),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -410,7 +410,7 @@ async def test_silent_drift(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_update(suspect, forbidden="send_message"),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -463,7 +463,7 @@ async def test_healthy(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_no_op(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
 
@@ -508,7 +508,7 @@ async def test_repairs_half_formed_send(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_update(suspect, forbidden=None),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -545,7 +545,7 @@ async def test_incomplete_run_is_not_drift(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_no_op(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
 
@@ -576,7 +576,7 @@ async def test_max_steps_no_calls_is_not_drift(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_no_op(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
 
@@ -617,7 +617,7 @@ async def test_tool_failure_is_not_drift(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_no_op(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
 
@@ -655,7 +655,7 @@ async def test_run_failure_is_not_drift(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_no_op(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
 
@@ -914,7 +914,7 @@ async def test_rewrites_prose_to_numbered(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_rewrote_numbered(suspect),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -950,7 +950,7 @@ async def test_repairs_done_only_bailout(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_rewrote_numbered(suspect),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -981,7 +981,7 @@ async def test_repairs_zero_tool_bailout(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_rewrote_numbered(suspect),
+        score=_score_suggests(suspect),
         min_pass_rate=None,
     )
 
@@ -1039,6 +1039,85 @@ async def test_quiet_when_nothing_drifted(collector_eval) -> None:
             ],
         ),
         snapshot=_snapshot(suspect),
-        score=_score_quiet(suspect),
+        score=_score_healthy(suspect),
+        min_pass_rate=None,
+    )
+
+
+# ── Fruitless-run drift: persistent ⚠ NO WRITES (the phase-6 contract) ────────
+
+_ROUNDUP_PROMPT = (
+    "Collect fresh tech headlines worth a glance.\n"
+    "1. browse a tech-news source for today's headlines; read the pages.\n"
+    '2. collection_write("tech-roundup", entries=[...]) for each new headline.\n'
+    "3. done()."
+)
+_ROUNDUP_INTENT = "Keep a list of fresh tech headlines — I'll check the list myself."
+_ROUNDUP_DESCRIPTION = "A running list of fresh tech headlines."
+
+
+def _fruitless_run(run_id: str) -> dict:
+    """One run that browsed, every source failed, wrote NOTHING, then closed with a
+    confabulated success summary — the production fruitless-run shape.  Renders
+    ``⚠ NO WRITES`` (browses failed + 0 writes) under a summary that lies."""
+    return {
+        "run_id": run_id,
+        "outcome": RunOutcome.WORKED,
+        "summary": "wrote 3 new tech headlines",
+        "calls": [
+            ("browse", {"queries": ["https://news.example.test/tech"]}),
+            ("done", {"success": True, "summary": "wrote 3 new tech headlines"}),
+        ],
+        "messages": _browse_fail_turns(3),
+    }
+
+
+async def test_persistent_no_writes_is_suggested(collector_eval) -> None:
+    """A browse collector that has read NOTHING and written NOTHING cycle after
+    cycle (persistent ``⚠ NO WRITES``, each closing with a confabulated "wrote 3"
+    summary) is real drift — the source is unreachable.  Quality must read the
+    collector's run history, confirm the pattern, and SUGGEST switching the source,
+    without applying anything (no collection_update)."""
+    suspect = "tech-roundup"
+    await collector_eval(
+        case_id="quality-persistent-no-writes",
+        collection=PennyConstants.MEMORY_QUALITY_COLLECTION,
+        seed=_seed(
+            suspect=suspect,
+            description=_ROUNDUP_DESCRIPTION,
+            intent=_ROUNDUP_INTENT,
+            prompt=_ROUNDUP_PROMPT,
+            runs=[
+                _fruitless_run("roundup-1"),
+                _fruitless_run("roundup-2"),
+                _fruitless_run("roundup-3"),
+            ],
+        ),
+        snapshot=_snapshot(suspect),
+        score=_score_suggests(suspect),
+        min_pass_rate=None,
+    )
+
+
+async def test_single_no_writes_is_not_drift(collector_eval) -> None:
+    """A SINGLE ``⚠ NO WRITES`` cycle is transience, not drift — a source can fail
+    to load once.  With only one fruitless run in the collector's history, quality
+    must read that history, see no pattern, and leave the collection alone (no
+    suggestion, no mutation).  This is what the run-history check buys: telling a
+    one-off from a pattern, so a transient browse failure doesn't spam the user —
+    the over-correction guard for the new ``⚠ NO WRITES`` signal."""
+    suspect = "tech-roundup"
+    await collector_eval(
+        case_id="quality-single-no-writes",
+        collection=PennyConstants.MEMORY_QUALITY_COLLECTION,
+        seed=_seed(
+            suspect=suspect,
+            description=_ROUNDUP_DESCRIPTION,
+            intent=_ROUNDUP_INTENT,
+            prompt=_ROUNDUP_PROMPT,
+            runs=[_fruitless_run("roundup-1")],
+        ),
+        snapshot=_snapshot(suspect),
+        score=_score_healthy(suspect),
         min_pass_rate=None,
     )
