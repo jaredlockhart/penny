@@ -50,6 +50,7 @@ from penny.tools.memory_args import (
     CollectionMergeArgs,
     CollectionUpdateArgs,
     CollectionWriteArgs,
+    CollectorRunHistoryArgs,
     DoneArgs,
     ExistsArgs,
     LogAppendArgs,
@@ -1244,6 +1245,64 @@ class LogReadTool(CursorReadTool):
             self._pending[memory] = max_seen
 
 
+class CollectorRunHistoryTool(MemoryTool):
+    """Read ONE collector's recent runs as full records, newest first.
+
+    ``log_read("collector-runs")`` gives the cross-collector run index — one
+    record per recent run across every collector.  This zooms into a single
+    collector: the model passes a collection name (a candidate it spotted in that
+    index) and gets that collector's last several runs as the same rendered
+    records (counts line + health flags + tool trace).  That's what lets a
+    reviewer judge whether a problem is a one-off or a **persistent pattern across
+    cycles** before acting on it.  The count is fixed in Python
+    (``RUN_HISTORY_RECORDS``) — the model never chooses a size, same as every
+    other read.  Stateless (no cursor): re-reading returns the same window.
+    """
+
+    name = "collector_run_history"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "collector": {
+                "type": "string",
+                "description": "The collection name whose collector run history to read.",
+            }
+        },
+        "required": ["collector"],
+    }
+    args_model = CollectorRunHistoryArgs
+    description = (
+        "Read one collector's recent runs (full records: counts, health flags, "
+        "tool trace), newest first — to judge whether a problem is a one-off or a "
+        "persistent pattern across cycles.  Pass the collection name; the count is "
+        "fixed."
+    )
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def _run(self, **kwargs: Any) -> ToolResult:
+        args = CollectorRunHistoryArgs(**kwargs)
+        # Resolve first so an unknown collector returns the actionable
+        # "memory not found" refusal (a MemoryAccessError caught by execute),
+        # not a silent empty history that reads as "this collector is healthy".
+        _resolve(self._db, args.collector)
+        records = self._db.messages.target_run_records(
+            args.collector, PennyConstants.RUN_HISTORY_RECORDS
+        )
+        if not records:
+            return ToolResult(
+                message=(
+                    f"No completed runs recorded yet for `{args.collector}` — it may be "
+                    "newly created or never have run.  Judge it from its current run in "
+                    "the index, not its history."
+                )
+            )
+        return ToolResult(
+            message=_format_entries(records, source=args.collector, ordering="most recent first")
+        )
+
+
 class _PublishedItem(NamedTuple):
     """One candidate from a published collection: the source name + its intent
     (for framing) and the entry itself."""
@@ -1554,6 +1613,7 @@ def build_memory_tools(
         MemoryMetadataTool(db),
         CollectionCatalogTool(db),
         LogReadTool(db, agent_name, scope),
+        CollectorRunHistoryTool(db),
         ReadPublishedLatestTool(db, agent_name),
         ExistsTool(db, llm_client),
     ]

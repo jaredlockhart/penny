@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from penny.agents.models import MessageRole
 from penny.constants import PennyConstants, RunOutcome
 from penny.database.memory.objects import classify_run, render_run_record
-from penny.database.models import CommandLog, MessageLog, PromptLog
+from penny.database.models import CommandLog, MemoryEntry, MessageLog, PromptLog
 
 logger = logging.getLogger(__name__)
 
@@ -568,6 +568,56 @@ class MessageStore:
                 .limit(limit)
             ).all()
         return [(timestamp, reason) for timestamp, reason in rows if reason]
+
+    def target_run_records(self, run_target: str, limit: int) -> list[MemoryEntry]:
+        """One collector's recent runs as rendered RECORDS (newest first) — the
+        same ``render_run_record`` representation the model reads from
+        ``log_read("collector-runs")``, but scoped to a single ``run_target`` so
+        it can judge "is this a one-off or a persistent pattern across cycles?".
+
+        Heavier than ``recent_run_summaries`` (which is the one-line ``done``
+        prose): each record carries the structural counts line + health flags +
+        the run's tool trace.  Returns ``MemoryEntry`` (content = the record,
+        ``created_at`` = the run's end time) so the tool formats it through the
+        same ``_format_entries`` as every other read.  Served by
+        ``ix_promptlog_target_runs`` (a bounded ``LIMIT``, not a scan).
+        """
+        if limit <= 0:
+            return []
+        with self._session() as session:
+            run_ids = self._page_of_target_run_ids(session, run_target, limit, 0)
+            if not run_ids:
+                return []
+            grouped = self._group_runs(session, run_ids)
+        return [self._run_record_entry(run_target, run_id, grouped[run_id]) for run_id in run_ids]
+
+    @staticmethod
+    def _group_runs(session: Session, run_ids: list[str]) -> dict[str, list[PromptLog]]:
+        """Load every prompt of the given runs, grouped by ``run_id`` (each run's
+        prompts in ascending time order — the trace order ``render_run_record``
+        expects)."""
+        grouped: dict[str, list[PromptLog]] = {}
+        prompts = session.exec(
+            select(PromptLog)
+            .where(PromptLog.run_id.in_(run_ids))  # ty: ignore[unresolved-attribute]
+            .order_by(PromptLog.timestamp.asc())
+        ).all()
+        for prompt in prompts:
+            if prompt.run_id is not None:
+                grouped.setdefault(prompt.run_id, []).append(prompt)
+        return grouped
+
+    @staticmethod
+    def _run_record_entry(run_target: str, run_id: str, prompts: list[PromptLog]) -> MemoryEntry:
+        """One run rendered as a record-bearing ``MemoryEntry`` (``created_at`` =
+        the run's last prompt = its completion time)."""
+        return MemoryEntry(
+            memory_name=PennyConstants.MEMORY_COLLECTOR_RUNS_LOG,
+            key=None,
+            content=render_run_record(prompts),
+            author=PennyConstants.MessageAuthor.COLLECTOR,
+            created_at=prompts[-1].timestamp,
+        )
 
     def get_prompt_log_runs(
         self,

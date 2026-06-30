@@ -287,6 +287,14 @@ class ReadLogArgs(BaseModel):
     memory: MemoryName
 
 
+class CollectorRunHistoryArgs(BaseModel):
+    """Read one collector's recent runs.  The caller names only the collector
+    (collection) — the count is fixed in Python (``RUN_HISTORY_RECORDS``), never
+    by the model, like every other read tool."""
+
+    collector: MemoryName
+
+
 # ── Collection writes ───────────────────────────────────────────────────────
 
 

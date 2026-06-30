@@ -218,6 +218,13 @@ class PennyConstants:
     # bounded batches across cycles instead of flooding one agentic loop with
     # hundreds of entries it can't reason over.
     LOG_READ_LIMIT = 10
+    # How many of ONE collector's recent runs the ``collector_run_history`` tool
+    # returns — full rendered run records (counts line + flags + tool trace), not
+    # the one-line ``done`` summaries the cycle-start own-history block shows.
+    # Fixed in Python (the model passes the collector name, never the count) and
+    # bounded below ``COLLECTOR_RUN_HISTORY`` (10) because each record is heavy:
+    # enough cycles to judge "one-off vs. persistent pattern" without flooding.
+    RUN_HISTORY_RECORDS = 8
     # Cold-start window for a consumer draining a published collection it has no
     # cursor for yet.  Rather than replay the whole backlog (a flood) or skip it
     # entirely, the consumer starts one week back — the user-chosen window: the

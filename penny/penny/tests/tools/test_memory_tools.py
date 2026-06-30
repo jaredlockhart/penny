@@ -8,6 +8,7 @@ similarity reads and dedup have something to work with.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -32,6 +33,7 @@ from penny.tools.memory_tools import (
     CollectionUnarchiveTool,
     CollectionUpdateTool,
     CollectionWriteTool,
+    CollectorRunHistoryTool,
     DoneTool,
     ExistsTool,
     LogAppendTool,
@@ -672,6 +674,108 @@ class TestLogTools:
         assert "[espresso-gear] sent an update about a grinder" in rendered.message
         assert "Found a new grinder, $300." in rendered.message  # the exact message, untruncated
 
+    @staticmethod
+    def _log_run(db, *, run_id: str, target: str, summary: str, write_key: str) -> None:
+        """Persist one completed collector run for ``target`` (a write + its
+        ``done`` summary) — the promptlog rows ``collector_run_history`` renders.
+        ``response`` is a dict (``log_prompt`` serializes it); the inner tool-call
+        ``arguments`` is itself a JSON string, as the model emits it."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "w0",
+                                "type": "function",
+                                "function": {
+                                    "name": "collection_write",
+                                    "arguments": json.dumps(
+                                        {
+                                            "memory": target,
+                                            "entries": [{"key": write_key, "content": "v"}],
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        db.messages.log_prompt(
+            model="m",
+            messages=[],
+            response=response,
+            agent_name="collector",
+            run_id=run_id,
+            run_target=target,
+        )
+        db.messages.set_run_outcome(run_id, "worked", summary)
+
+    @staticmethod
+    async def _create_collection(db, name: str) -> None:
+        await CollectionCreateTool(db, None).execute(
+            name=name,
+            description="x",
+            inclusion="never",
+            recall="recent",
+            extraction_prompt="test fixture extraction prompt",
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+
+    @pytest.mark.asyncio
+    async def test_collector_run_history_scopes_to_one_collector_newest_first(self, tmp_path):
+        """``collector_run_history`` returns ONE named collector's recent runs as
+        records, newest-first — so a reviewer judges a pattern across that
+        collector's cycles, not the cross-collector index ``log_read`` gives.
+        Other collectors' runs are excluded."""
+        db = _make_db(tmp_path)
+        await self._create_collection(db, "ai-news")
+        await self._create_collection(db, "espresso")
+        self._log_run(db, run_id="news-1", target="ai-news", summary="wrote 1", write_key="older")
+        self._log_run(db, run_id="news-2", target="ai-news", summary="wrote 2", write_key="newer")
+        self._log_run(db, run_id="gear-1", target="espresso", summary="wrote g", write_key="grind")
+
+        result = await CollectorRunHistoryTool(db).execute(collector="ai-news")
+
+        assert "from `ai-news`" in result.message and "most recent first" in result.message
+        # Both of this collector's runs, newest first; the other collector absent.
+        assert result.message.index("wrote 2") < result.message.index("wrote 1")
+        assert "[ai-news]" in result.message and "[espresso]" not in result.message
+        assert "wrote g" not in result.message
+
+    @pytest.mark.asyncio
+    async def test_collector_run_history_unknown_collector_is_actionable_error(self, tmp_path):
+        """An unknown collector name returns a failed, actionable refusal (not a
+        silent empty history that would read as 'this collector is healthy')."""
+        db = _make_db(tmp_path)
+        result = await CollectorRunHistoryTool(db).execute(collector="does-not-exist")
+        assert result.success is False
+        assert "does-not-exist" in result.message
+
+    @pytest.mark.asyncio
+    async def test_collector_run_history_no_runs_yet_is_clear(self, tmp_path):
+        """A real collector with no completed runs gets a clear 'no runs yet'
+        sentinel — distinct from the unknown-name error, so the model judges it
+        from its current run rather than reading absence as health."""
+        db = _make_db(tmp_path)
+        await CollectionCreateTool(db, None).execute(
+            name="fresh-feed",
+            description="x",
+            inclusion="never",
+            recall="recent",
+            extraction_prompt="test fixture extraction prompt",
+            collector_interval_seconds=3600,
+            intent="a running list the user asked me to keep",
+        )
+        result = await CollectorRunHistoryTool(db).execute(collector="fresh-feed")
+        assert result.success is True
+        assert "No completed runs" in result.message and "fresh-feed" in result.message
+
     @pytest.mark.asyncio
     async def test_append_to_system_log_is_refused(self, tmp_path, mock_llm):
         """Invariant #1: the four framework-managed system logs are written
@@ -1187,6 +1291,7 @@ class TestFactory:
         "memory_metadata",
         "collection_catalog",
         "log_read",
+        "collector_run_history",
         "read_published_latest",
         "read_similar",
         "exists",
