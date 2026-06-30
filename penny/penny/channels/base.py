@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,10 @@ if TYPE_CHECKING:
     from penny.scheduler import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
+
+# URLs Penny cites in an outgoing message — used to attach the cited page's own
+# captured image at egress (see ``MediaStore.select_image``).
+_MESSAGE_URL_RE = re.compile(r"https?://[^\s)>\]]+")
 
 
 class PageContext(BaseModel):
@@ -335,7 +340,7 @@ class MessageChannel(ABC):
         # Embed once: stored on the messagelog row (the penny-messages facade's
         # read_similar ranks on it) and reused for nearest-image matching.
         embedding = await embed_text(self._embedding_model_client, prepared)
-        attachments = self._resolve_media(attachments, embedding)
+        attachments = self._resolve_media(attachments, prepared, embedding)
         message_id, external_id = await self._log_and_send(
             recipient,
             prepared,
@@ -389,17 +394,19 @@ class MessageChannel(ABC):
         return message_id, external_id
 
     def _resolve_media(
-        self, attachments: list[str] | None, embedding: list[float] | None
+        self, attachments: list[str] | None, text: str, embedding: list[float] | None
     ) -> list[str] | None:
-        """Attach the browsed image whose metadata is closest to this message.
+        """Attach the most relevant browsed image to this message.
 
-        Skipped when the caller already supplied an attachment (e.g. ``/draw``)
-        or no embedding is available. The single nearest embedded image always
-        wins — no floor — so replies carry an image whenever any has been browsed.
+        Skipped when the caller already supplied an attachment (e.g. ``/draw``).
+        Otherwise ``select_image`` prefers the image captured from a page the
+        message links (exact URL, then domain) and falls back to a jittered
+        embedding-nearest pick — so replies carry an image whenever one matches.
         """
-        if attachments or embedding is None:
+        if attachments:
             return attachments
-        media = self._db.media.find_nearest(embedding)
+        urls = _MESSAGE_URL_RE.findall(text)
+        media = self._db.media.select_image(urls, embedding)
         if media is None:
             return attachments
         encoded = base64.b64encode(media.data).decode()

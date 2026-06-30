@@ -841,34 +841,86 @@ class TestMediaStore:
         db = _make_db(tmp_path)
         assert db.media.get(99999) is None
 
-    def test_find_nearest_returns_closest(self, tmp_path):
-        db = _make_db(tmp_path)
-        db.media.put(
-            b"a", "image/png", source_url="https://a", embedding=serialize_embedding([1.0, 0.0])
-        )
-        db.media.put(
-            b"b", "image/png", source_url="https://b", embedding=serialize_embedding([0.0, 1.0])
+    def _put(self, db, data, url, vector=None):
+        return db.media.put(
+            data,
+            "image/png",
+            source_url=url,
+            embedding=serialize_embedding(vector) if vector else None,
         )
 
-        match = db.media.find_nearest([0.9, 0.1])
+    def test_select_image_prefers_exact_cited_url_newest(self, tmp_path):
+        """Tier 1: the message links a page we captured — attach that page's own
+        image (newest capture), even when another image embeds closer."""
+        db = _make_db(tmp_path)
+        # An embedding-identical image from a DIFFERENT page (would win on cosine).
+        self._put(db, b"other", "https://other.test/x", [1.0, 0.0])
+        self._put(db, b"old", "https://cited.test/p", [0.0, 1.0])  # older capture
+        newest = self._put(db, b"new", "https://cited.test/p", [0.0, 1.0])
+        # Trailing punctuation on the cited URL is normalized away.
+        match = db.media.select_image(["https://cited.test/p."], [1.0, 0.0])
         assert match is not None
-        assert match.source_url == "https://a"
+        assert match.id == newest
+        assert match.data == b"new"
 
-    def test_find_nearest_no_floor_returns_even_weak_match(self, tmp_path):
-        """The single nearest image always wins — a reply is never left
-        imageless even when the cosine is poor."""
+    def test_select_image_exact_url_works_without_embedding(self, tmp_path):
+        """Tier 1 needs no embedding — the cited page's image attaches even when
+        the message text couldn't be embedded."""
         db = _make_db(tmp_path)
-        db.media.put(
-            b"a", "image/png", source_url="https://a", embedding=serialize_embedding([1.0, 0.0])
-        )
-        match = db.media.find_nearest([0.0, 1.0])
+        cited = self._put(db, b"a", "https://cited.test/p")  # no embedding
+        match = db.media.select_image(["https://cited.test/p"], None)
+        assert match is not None and match.id == cited
+
+    def test_select_image_prefers_cited_domain_nearest(self, tmp_path):
+        """Tier 2: the message links a page on a domain we have images from (but
+        not that exact page) — pick the embedding-nearest image of that domain,
+        not the globally nearest off-domain image."""
+        db = _make_db(tmp_path)
+        self._put(db, b"far", "https://site.test/a", [0.0, 1.0])
+        near = self._put(db, b"near", "https://site.test/b", [0.9, 0.1])
+        self._put(db, b"offdomain", "https://elsewhere.test/z", [1.0, 0.0])  # global nearest
+        match = db.media.select_image(["https://site.test/c"], [1.0, 0.0])
         assert match is not None
-        assert match.source_url == "https://a"
+        assert match.id == near
 
-    def test_find_nearest_returns_none_when_no_embedded_media(self, tmp_path):
+    def test_select_image_jitters_among_top_k_when_no_url(self, tmp_path, monkeypatch):
+        """Tier 3: no cited URL — pick uniformly at random among the top-K nearest
+        (not the strict argmax), so a magnet image can't repeat on every message."""
         db = _make_db(tmp_path)
-        db.media.put(b"a", "image/png", source_url="https://a")  # no embedding
-        assert db.media.find_nearest([1.0, 0.0]) is None
+        # 6 images at decreasing closeness to the query [1,0]; the 6th is farthest.
+        vectors = [[1.0, 0.0], [0.95, 0.05], [0.9, 0.1], [0.85, 0.15], [0.8, 0.2], [0.0, 1.0]]
+        ids = [
+            self._put(db, f"v{i}".encode(), f"https://s.test/{i}", v) for i, v in enumerate(vectors)
+        ]
+        seen = {}
+
+        def choose(pool):
+            seen["pool"] = list(pool)
+            return pool[-1]  # deliberately NOT the nearest
+
+        monkeypatch.setattr("penny.database.media_store.random.choice", choose)
+        match = db.media.select_image([], [1.0, 0.0])
+        assert match is not None
+        # The pool is the top-K nearest (K=5), excluding the farthest image.
+        assert len(seen["pool"]) == PennyConstants.MEDIA_MATCH_JITTER_TOPK
+        assert ids[-1] not in seen["pool"]
+        # Jitter honoured the random pick, not the argmax.
+        assert match.id == seen["pool"][-1]
+
+    def test_select_image_no_floor_attaches_even_weak_match(self, tmp_path):
+        """Tier 3 has no floor — a reply is never left imageless: with one image
+        the pool is that image regardless of how poor the cosine is."""
+        db = _make_db(tmp_path)
+        only = self._put(db, b"a", "https://a.test", [1.0, 0.0])
+        match = db.media.select_image([], [0.0, 1.0])  # orthogonal
+        assert match is not None and match.id == only
+
+    def test_select_image_none_when_no_url_match_and_no_embedded_media(self, tmp_path):
+        db = _make_db(tmp_path)
+        self._put(db, b"a", "https://a.test")  # no embedding
+        assert db.media.select_image([], [1.0, 0.0]) is None  # no embedded media to fall back to
+        assert db.media.select_image([], None) is None  # nothing to match at all
+        assert db.media.select_image(["https://nope.test/x"], [1.0, 0.0]) is None  # url misses
 
 
 class TestWriteTypeEnforcement:
