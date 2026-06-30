@@ -197,6 +197,22 @@ def tool_was_called(db: Database, tool_name: str) -> bool:
     )
 
 
+def last_tool_args(db: Database, tool_name: str) -> dict | None:
+    """Parsed ``arguments`` of the most recent ``tool_name`` call this run (``None``
+    if never called).  Like ``tool_was_called`` but returns the call's args — e.g.
+    read ``done(success=...)`` to check a collector closed honestly.  Sourced from
+    the persisted promptlog (newest-first), so it's the real record of what the
+    model emitted, not a harness spy."""
+    for row in db.messages.recent_prompts(limit=200):
+        for call in _response_tool_calls(row):
+            if call.get("function", {}).get("name") == tool_name:
+                try:
+                    return json.loads(call.get("function", {}).get("arguments") or "{}")
+                except json.JSONDecodeError, TypeError:
+                    return {}
+    return None
+
+
 _NUMBERED_LINE = re.compile(r"^\s*\d+[.)]\s", re.MULTILINE)
 
 
@@ -225,6 +241,17 @@ _NO_RESULTS_PAGE = (
 )
 
 
+class _BrowseReadError(Exception):
+    """Raised by a ``fails=True`` CannedPage so the browse tool renders a real
+    ``## browse error:`` section for that query.  Deliberately NOT a
+    ``ConnectionError``/``TimeoutError`` — those are the two ``_read_page``
+    retries (1s·2^n backoff ×4), which a flailing all-fail cycle would multiply
+    into minutes per sample.  An uncaught type propagates straight to the
+    per-subcall ``gather(return_exceptions=True)`` and renders immediately, with
+    the same ``Could not read this page: <message>`` text a real failure shows.
+    """
+
+
 def install_browse(penny: Penny, pages: list[CannedPage]) -> None:
     """Replace the generic browse mock with query-aware canned pages.
 
@@ -236,14 +263,20 @@ def install_browse(penny: Penny, pages: list[CannedPage]) -> None:
     ``match`` substring.  A query the model issues becomes a URL (search →
     ``SEARCH_URL`` + ``quote(query)``; direct read → the URL itself), so a
     case-token substring matches both shapes, and a refined follow-up query
-    maps to a different page — supporting multi-hop chains.  Installed on BOTH
-    agents (chat + collector) since the generic mock sits on both.
+    maps to a different page — supporting multi-hop chains.  A ``fails=True``
+    page raises instead of returning, so the query renders ``## browse error:``
+    (see ``CannedPage``).  Installed on BOTH agents (chat + collector) since the
+    generic mock sits on both.
     """
 
     async def request_fn(method: str, params: dict) -> tuple[str, str | None]:
         url = params.get("url", "").lower()
         for page in pages:
             if page.match.lower() in url:
+                if page.fails:
+                    raise _BrowseReadError(
+                        f"failed to read {url} after 3 attempts: the source could not be read"
+                    )
                 return page.text, page.image
         return _NO_RESULTS_PAGE, None
 

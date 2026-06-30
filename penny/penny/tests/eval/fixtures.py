@@ -45,11 +45,26 @@ class CannedPage:
     line and the source URL *in the visible body* (the model cites URLs from the
     text it sees).  For search-shaped pages, put the fact lines adjacent to a
     solo markdown-link line so search trimming keeps them.  See ``install_browse``.
+
+    ``fails=True`` makes a matched read RAISE inside the browse tool, so the run
+    renders a ``## browse error:`` section for that query (the only place a read
+    failure is visible — see ``database/memory/objects.py`` run-health tally).
+    A ``match=""`` page matches every URL (``"" in url`` is always true), so a
+    single ``CannedPage(match="", fails=True)`` makes *every* source unreachable
+    — the "browsed a lot, read nothing usable" cycle.  ``text`` is ignored when
+    ``fails`` is set.
     """
 
     match: str
     text: str
     image: str | None = None
+    fails: bool = False
+
+
+# Every browse read fails — the "browsed many sources, read nothing usable, wrote
+# nothing" cycle that produced a confabulated done() summary in production.  Place
+# it as the SOLE / LAST page so specific success pages (if any) still match first.
+ALL_BROWSES_FAIL = CannedPage(match="", text="", fails=True)
 
 
 BOARD_GAMES = SynthCollection(

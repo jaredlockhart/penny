@@ -522,20 +522,44 @@ real chat/collector loops and score persisted DB state + sends at a `pass_rate`
 threshold (`min_pass_rate=None` = report-only). The coverage matrix is the two
 agent shapes × answer-from-memory vs. browse-and-reason: `test_chat_response.py`,
 `test_collection_lifecycle.py`, `test_extractors.py`, `test_skills_extractor.py`,
-`test_quality_correction.py`, `test_retrieval.py`, `test_peripheral.py`. Browse is
-stubbed; a case injects realistic pages via the `browse=` kwarg (query-aware
-`install_browse` / `CannedPage` in `conftest.py`) to score multi-step tool
-reasoning. See `docs/self-improvement-loop.md`.
+`test_quality_correction.py`, `test_collector_honesty.py`, `test_retrieval.py`,
+`test_peripheral.py`. Browse is stubbed; a case injects realistic pages via the
+`browse=` kwarg (query-aware `install_browse` / `CannedPage` in `conftest.py`) to
+score multi-step tool reasoning. A `CannedPage(fails=True)` makes a matched read
+*error* (renders `## browse error:` without the real retry backoff), and the
+shared `ALL_BROWSES_FAIL` catch-all makes every source unreachable — the way to
+exercise read-failure honesty (a cycle that browsed a lot, read nothing, and must
+not confabulate a write/success at `done()`). See `docs/self-improvement-loop.md`.
 
-#### Every model-facing change ships a durable eval contract (do this last, before landing)
+#### Every model-facing change ships a durable eval contract — validated per change, not batched
 
 Any change that alters how the model behaves — a prompt/`extraction_prompt` edit,
 a tool description, a loop/nudge/retry/validation mechanism, a tool-surface
-change — **must land with a `tests/eval/` case that encodes the behaviour it
-establishes or fixes.** The eval suite is both the regression net (a future
-prompt tweak can't silently undo it) and the *written contract* for what we
-expect the model to do. A model-facing change without an eval contract is
+change, **or a change to what the model READS** (how a run record, tool result,
+or recall block is rendered) — **must land with a `tests/eval/` case that encodes
+the behaviour it establishes or fixes.** The eval suite is both the regression net
+(a future prompt tweak can't silently undo it) and the *written contract* for what
+we expect the model to do. A model-facing change without an eval contract is
 incomplete — the next change will regress it and nothing will catch it.
+
+**Validate each change as you build it, not in one batch at the end.** A multi-part
+change (e.g. honest-`done()` guidance, then a structural counts line, then a flag the
+self-review reads) is several independent asks of the model — each needs its own
+`make eval` gate *as it lands*, because a single eval at the end can't tell you *which*
+lever the model did or didn't understand. Shipping the code first and "evaluating later"
+has shipped levers here that the model ignored (a phase-1 `done()` guidance scored 0/3
+until its wording was sharpened — measurable only because it was eval'd on its own, with
+a no-change baseline to beat). Run a **baseline first** when you can (the change vs. its
+absence) so the eval shows the lever is load-bearing, not just that the case passes.
+
+**Changes to what the model reads get a NON-REGRESSION eval against the EXISTING cases.**
+A rendering change (a new line/flag in the run record the `quality` collector reads) is
+an input shift to every consumer of that surface, even though it edits no prompt. It
+ships green only after the existing cases that read that surface (`test_quality_correction.py`)
+are re-run on the branch and shown to still hold — the new signal must not flip a
+leave-alone case into a spurious rewrite, nor mute a corrective one. The shared
+`render_run_record` is read by both the collector prompts and the addon, so one rendering
+edit moves both; the existing suite is the proof it didn't regress them.
 
 **Authoring a case is not running it.** Every prompt change must be *dry-run through
 the harness against the live model* (`make eval` / a focused case) and the result read
