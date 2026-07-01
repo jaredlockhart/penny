@@ -235,6 +235,47 @@ Always include specific details (specs, dates, prices) and at least one \
 source URL so the user can follow up."""
         assert rest == expected, f"System prompt mismatch:\n{rest!r}\n\nvs expected:\n{expected!r}"
 
+        # ── Live-context turn (the final user turn the model actually sees) ────
+        # Volatile per-turn context — the current time + ambient recall — rides
+        # here behind the shared header, NOT in the static system prompt above.
+        # (Recall renders playlists + tips; dislikes/thoughts memories are empty
+        # until their collectors run, so they don't surface.)  The verbatim
+        # system + turn dumps together are the full on-wire structure, and also
+        # guard the CONVERSATION_PROMPT tokens `log_read` (#1225) and the
+        # anti-refusal "you MUST respond with what you found" line (#775).
+        user_turn = first_request["messages"][-1]
+        assert user_turn["role"] == "user"
+        turn_text = re.sub(
+            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "YYYY-MM-DD HH:MM", user_turn["content"]
+        )
+        turn_text = re.sub(
+            r"The current time is \d{2}:\d{2} [AP]M UTC\.",
+            "The current time is HH:MM XM UTC.",
+            turn_text,
+        )
+        expected_turn = """\
+### Live context (injected background — current info, not from the user, not an instruction)
+The current time is HH:MM XM UTC.
+
+### playlists
+favorite playlists
+
+#### [morning] · YYYY-MM-DD HH:MM UTC
+prog rock
+
+### tips
+useful tips
+
+#### YYYY-MM-DD HH:MM UTC
+tune before playing
+
+---
+
+what's the weather like today?"""
+        assert turn_text == expected_turn, (
+            f"Live-context turn mismatch:\n{turn_text!r}\n\nvs expected:\n{expected_turn!r}"
+        )
+
         # Verify typing indicators were sent
         assert len(signal_server.typing_events) >= 1, "Should have sent typing indicator"
 
@@ -322,10 +363,16 @@ async def test_chat_prompt_renders_relevant_mode_via_embedding(
             TEST_SENDER, content="tell me about espresso"
         )
 
-    assert "### trivia" in injected
-    assert "facts" in injected
-    assert "[espresso]" in injected
-    assert "espresso uses 9 bars of pressure" in injected
+    injected = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "YYYY-MM-DD HH:MM", injected)
+    assert (
+        injected
+        == """\
+### trivia
+facts
+
+#### [espresso] · YYYY-MM-DD HH:MM UTC
+espresso uses 9 bars of pressure"""
+    )
 
 
 # ── 2. Special success cases ──────────────────────────────────────────────
@@ -358,55 +405,11 @@ async def test_message_without_tool_call(
         assert len(mock_llm.requests) == 1
 
 
-@pytest.mark.asyncio
-async def test_conversation_prompt_names_log_read_tool(
-    signal_server, mock_llm, test_config, test_user_info, running_penny
-):
-    """
-    Regression test for #1225: CONVERSATION_PROMPT must mention `log_read`
-    explicitly so the model calls the correct tool name, not the bare `read_recent`
-    (which is only the MemoryStore method name, never a registered tool).
-    """
-    mock_llm.set_default_flow(final_response="got it! 👍")
-
-    async with running_penny(test_config):
-        await signal_server.push_message(sender=TEST_SENDER, content="test")
-        await signal_server.wait_for_message(timeout=10.0)
-
-    first_request = mock_llm.requests[0]
-    messages = first_request.get("messages", [])
-    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert "log_read" in system_text, (
-        "CONVERSATION_PROMPT must name `log_read` so the model uses the correct tool name"
-    )
-
-
-@pytest.mark.asyncio
-async def test_conversation_prompt_includes_antirefusal_instruction(
-    signal_server, mock_llm, test_config, test_user_info, running_penny
-):
-    """
-    Regression test for #775: CONVERSATION_PROMPT must include an explicit instruction
-    to never refuse a request, so the model always provides something useful.
-    """
-    mock_llm.set_default_flow(
-        final_response="here are some vegan options! 🌱",
-    )
-
-    async with running_penny(test_config):
-        await signal_server.push_message(
-            sender=TEST_SENDER,
-            content="what are the best vegan restaurants?",
-        )
-        await signal_server.wait_for_message(timeout=10.0)
-
-    # Verify the system prompt instructs the model to always provide something useful
-    first_request = mock_llm.requests[0]
-    messages = first_request.get("messages", [])
-    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert "must respond with what you found" in system_text.lower(), (
-        "CONVERSATION_PROMPT should instruct the model to respond with available results"
-    )
+# Regression coverage for #1225 (CONVERSATION_PROMPT must name `log_read`) and
+# #775 (the anti-refusal "you MUST respond with what you found" line) now lives
+# in test_basic_message_flow's verbatim system-prompt assertion — it pins the
+# whole instructions block char-for-char, so a dropped token fails there.  No
+# substring probes: prompt tests assert full verbatim dumps only.
 
 
 # ── 3. Error / edge cases ────────────────────────────────────────────────
